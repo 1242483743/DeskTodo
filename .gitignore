@@ -1,0 +1,33 @@
+# Generated programs and installers belong in Releases, not source commits.
+dist/
+release/
+build-v*/
+qa/
+staging/
+docx-review/
+GitHub发布/
+备份/
+bin/
+obj/
+*.exe
+*.zip
+*.user
+*.suo
+*.log
+*.dmp
+
+# Local user data, editor state and troubleshooting artifacts.
+tasks.json
+tasks.json.*
+tasks.backup.json
+*.corrupt-*
+exit.request
+show.request
+host-inspection.txt
+icon-preview-*.png
+codex-clipboard-*
+.vs/
+.idea/
+.codex/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <ProjectGuid>{12A3C215-898D-4E27-A48A-B79007A55560}</ProjectGuid>
+    <OutputType>WinExe</OutputType><RootNamespace>DesktopTodo</RootNamespace><AssemblyName>DeskTodo</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion><PlatformTarget>x64</PlatformTarget>
+    <StartupObject>DesktopTodo.Program</StartupObject><ApplicationManifest>app.manifest</ApplicationManifest><ApplicationIcon>..\图标\待办软件图标.ico</ApplicationIcon>
+    <AppConfig>DesktopTodo.exe.config</AppConfig>
+    <OutputPath>bin\$(Configuration)\</OutputPath><Optimize>true</Optimize><WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System"/><Reference Include="System.Core"/><Reference Include="System.Drawing"/>
+    <Reference Include="System.Windows.Forms"/><Reference Include="System.Runtime.Serialization"/>
+    <Reference Include="System.Xaml"/><Reference Include="WindowsBase"/>
+    <Reference Include="PresentationCore"/><Reference Include="PresentationFramework"/>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Models.cs"/><Compile Include="Storage.cs"/><Compile Include="NativeDesktop.cs"/>
+    <Compile Include="TodoWindow.cs"/><Compile Include="GesturePreview.cs"/><Compile Include="UiAssets.cs"/><Compile Include="UiGlyphs.cs"/><Compile Include="TrayMenu.cs"/><Compile Include="Themes.cs"/><Compile Include="ReminderPopup.cs"/><Compile Include="Program.cs"/><Compile Include="Tests.cs"/><Compile Include="AssemblyInfo.cs"/>
+    <EmbeddedResource Include="MainWindow.xaml"><LogicalName>DesktopTodo.MainWindow.xaml</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="ReminderWindow.xaml"><LogicalName>DesktopTodo.ReminderWindow.xaml</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="..\图标\待办软件内图标.png"><LogicalName>DesktopTodo.InternalIcon.png</LogicalName></EmbeddedResource>
+    <None Include="DesktopTodo.exe.config"><Link>App.config</Link></None>
+    <None Include="app.manifest"/>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>
+</Project>

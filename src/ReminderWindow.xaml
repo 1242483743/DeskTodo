@@ -1,0 +1,44 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Name="ReminderRoot" Title="DeskTodo 提醒" Width="420" SizeToContent="Height" WindowStyle="None" AllowsTransparency="True"
+        Background="Transparent" ShowInTaskbar="False" Topmost="True" WindowStartupLocation="CenterScreen"
+        FontFamily="Microsoft YaHei UI" FontSize="13" UseLayoutRounding="True">
+  <Window.Resources>
+    <Style x:Key="{x:Static SystemParameters.FocusVisualStyleKey}"><Setter Property="Control.Template"><Setter.Value><ControlTemplate><Border Background="Transparent"/></ControlTemplate></Setter.Value></Setter></Style>
+    <SolidColorBrush x:Key="CardBrush" Color="#FCFCFA"/><SolidColorBrush x:Key="TextBrush" Color="#263D35"/>
+    <SolidColorBrush x:Key="MutedBrush" Color="#88938D"/><SolidColorBrush x:Key="LineBrush" Color="#E7EBE5"/>
+    <SolidColorBrush x:Key="InputBrush" Color="#F0F3ED"/><SolidColorBrush x:Key="AccentBrush" Color="#3B795C"/>
+    <SolidColorBrush x:Key="HoverBrush" Color="#E9F0E6"/>
+    <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/></Style>
+    <Style TargetType="ScrollBar">
+      <Setter Property="Width" Value="5"/><Setter Property="MinWidth" Value="0"/><Setter Property="Opacity" Value="0.55"/>
+      <Setter Property="Focusable" Value="False"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar">
+        <Track x:Name="PART_Track" IsDirectionReversed="True" Orientation="Vertical">
+          <Track.DecreaseRepeatButton><RepeatButton Command="ScrollBar.PageUpCommand" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
+          <Track.Thumb><Thumb MinHeight="24" Focusable="False" FocusVisualStyle="{x:Null}"><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="{DynamicResource MutedBrush}" CornerRadius="2.5"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+          <Track.IncreaseRepeatButton><RepeatButton Command="ScrollBar.PageDownCommand" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
+        </Track>
+      </ControlTemplate></Setter.Value></Setter>
+      <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="1"/></Trigger></Style.Triggers>
+    </Style>
+    <Style x:Key="ReminderButton" TargetType="Button">
+      <Setter Property="Height" Value="38"/><Setter Property="Padding" Value="18,7"/><Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Background" Value="{DynamicResource InputBrush}"/><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.85"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+    </Style>
+  </Window.Resources>
+  <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="18" Padding="24" SnapsToDevicePixels="False">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <Grid x:Name="ReminderHeader" Background="Transparent" Cursor="SizeAll"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Image x:Name="ReminderIcon" Width="42" Height="42" Margin="0,0,13,0" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+        <StackPanel Grid.Column="1"><TextBlock Text="DeskTodo 提醒" FontSize="22" FontWeight="SemiBold"/><TextBlock x:Name="ReminderTime" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,6,0,0"/></StackPanel>
+      </Grid>
+      <TextBlock Grid.Row="1" Text="这件事情还没有完成" Foreground="{DynamicResource MutedBrush}" Margin="0,22,0,10"/>
+      <Border x:Name="ReminderItemSurface" Grid.Row="2" Background="{DynamicResource InputBrush}" CornerRadius="12" MinHeight="47" Padding="14,0"><ScrollViewer x:Name="ReminderItemScroll" MaxHeight="220" Margin="0,12" VerticalAlignment="Center" VerticalContentAlignment="Center" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><TextBlock x:Name="ReminderItems" TextWrapping="Wrap" LineHeight="23" VerticalAlignment="Center"/></ScrollViewer></Border>
+      <Grid Grid.Row="3" Margin="0,20,0,0"><StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="SnoozeButton" Content="10 分钟后提醒" Style="{StaticResource ReminderButton}" Margin="0,0,10,0"/>
+        <Button x:Name="DismissButton" Content="知道了" Style="{StaticResource ReminderButton}" Background="{DynamicResource AccentBrush}" Foreground="White"/>
+      </StackPanel></Grid>
+    </Grid>
+  </Border>
+</Window>

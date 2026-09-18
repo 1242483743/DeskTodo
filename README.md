@@ -4,15 +4,15 @@
 
 一款简洁的 Windows 桌面待办软件。当前版本：**v1.22**。
 
-本仓库用于软件介绍和安装包下载，不包含源代码。
+源码与安装包均在本仓库发布，源码采用 [MIT 许可证](LICENSE)。
 
 ## 下载
 
-打开本仓库的 **Releases** 页面，在版本下方的 **Assets** 中下载：
+打开 [Releases 页面](https://github.com/1242483743/DeskTodo/releases)，在版本下方的 **Assets** 中下载：
 
 `DeskTodo-Setup-v1.22.exe`
 
-请下载安装包，不要下载 GitHub 自动生成的 `Source code (zip)` 或 `Source code (tar.gz)`；它们仅包含仓库中的介绍文件，不包含软件。
+直接使用软件请下载安装包。GitHub 自动生成的 `Source code (zip)` / `Source code (tar.gz)` 包含该标签对应提交的源码，不是安装包；较早的安装包发布标签可能只有介绍文件，获取当前源码请使用本仓库的 `main` 分支。
 
 ## 主要功能
 
@@ -48,3 +48,45 @@
 ## 问题反馈
 
 可通过本仓库的 Issues 反馈问题。请说明软件版本、Windows 版本及复现步骤；如涉及多显示器，请附上各显示器的缩放比例。截图前请遮挡个人待办和其他隐私信息。
+
+## 从源码编译
+
+在 Windows 10 / 11 x64、.NET Framework 4.8 环境下使用 Windows PowerShell 5.1。项目使用系统 C# 编译器，不需要下载第三方包。
+
+```powershell
+git clone https://github.com/1242483743/DeskTodo.git
+cd DeskTodo
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-setup.ps1 -AppDirectory dist
+```
+
+应用程序输出到 `dist\DeskTodo.exe`，安装包输出到 `release\DeskTodo-Setup-v1.22.exe`。也可用 Visual Studio 打开 `src\DesktopTodo.csproj`（需要 .NET Framework 4.8 开发工具）。
+
+### 运行自检
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-setup.ps1 -AppDirectory dist -Test
+```
+
+测试会创建独立测试数据和临时窗口，输出到 `qa`；请在有可交互桌面的 Windows 会话中运行。真实 Explorer 桌面集成、不同显示器组合与 UAC 安装仍需手动验证。不要将测试数据或个人待办文件提交到仓库。
+
+## 项目结构
+
+```text
+src/             应用源码、WPF 界面、项目文件与自检
+installer/       安装器源码与界面
+图标/            程序和内部界面的图标资源
+build.ps1        编译应用程序
+build-setup.ps1  构建安装包
+build-icon.ps1   导出多尺寸透明 ICO
+使用说明.md       完整使用说明
+实现与验证.md     实现记录与已验证范围
+LICENSE          MIT 许可证
+```
+
+`dist`、`release`、`qa`、历史备份和个人待办数据均不纳入源码版本管理。
+
+## 许可证
+
+源码采用 [MIT](LICENSE)，版权署名为 `1242483743`。使用、修改或分发时请保留许可证和版权声明。
