@@ -1,4 +1,6 @@
 # DeskTodo
+<img width="20%" alt="待办软件图标-透明" src="https://github.com/user-attachments/assets/60f977e8-1536-49a2-8a7e-ebc04b20e2f7" />
+
 
 一款简洁的 Windows 桌面待办软件。当前版本：**v1.22**。
 
