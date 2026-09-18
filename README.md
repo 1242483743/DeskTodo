@@ -19,9 +19,9 @@
 - 每条事项可独立设置间隔提醒和每日定时提醒。
 - 十二套主题颜色、深色外观、自定义软件名称及事项时间显示。
 - 本地数据保存、备份导出与导入、托盘和开机启动。
-<img width="793" height="1361" alt="image" src="https://github.com/user-attachments/assets/a5bfbc57-d1f1-4de4-bf3f-895dec4406fd" />
-<img width="793" height="1361" alt="image" src="https://github.com/user-attachments/assets/8e9921c0-fa9a-4719-8844-1c9810f59b72" />
-<img width="793" height="1361" alt="image" src="https://github.com/user-attachments/assets/329c2fe6-31d9-4d12-a4a6-a13a134d50f7" />
+<img width="30%" alt="image" src="https://github.com/user-attachments/assets/a5bfbc57-d1f1-4de4-bf3f-895dec4406fd" />
+<img width="30%" alt="image" src="https://github.com/user-attachments/assets/8e9921c0-fa9a-4719-8844-1c9810f59b72" />
+<img width="30%" alt="image" src="https://github.com/user-attachments/assets/329c2fe6-31d9-4d12-a4a6-a13a134d50f7" />
 
 
 
