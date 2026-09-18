@@ -19,9 +19,10 @@
 - 每条事项可独立设置间隔提醒和每日定时提醒。
 - 十二套主题颜色、深色外观、自定义软件名称及事项时间显示。
 - 本地数据保存、备份导出与导入、托盘和开机启动。
-<img width="30%" alt="image" src="https://github.com/user-attachments/assets/a5bfbc57-d1f1-4de4-bf3f-895dec4406fd" />
-<img width="30%" alt="image" src="https://github.com/user-attachments/assets/8e9921c0-fa9a-4719-8844-1c9810f59b72" />
-<img width="30%" alt="image" src="https://github.com/user-attachments/assets/329c2fe6-31d9-4d12-a4a6-a13a134d50f7" />
+- <img width="30%" alt="ChatGPT Image 2026年9月18日 20_32_52 (3)" src="https://github.com/user-attachments/assets/b0c614ee-789f-49c1-950b-aa7722c8c7b7" />
+<img width="30%" alt="ChatGPT Image 2026年9月18日 20_32_51 (2)" src="https://github.com/user-attachments/assets/01c7157d-0c2e-49e7-a2f7-a828a601e195" />
+<img width="30%" alt="ChatGPT Image 2026年9月18日 20_32_51 (1)" src="https://github.com/user-attachments/assets/fbf1facc-452f-461a-a24e-e7276c797dff" />
+
 
 
 
