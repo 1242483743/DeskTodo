@@ -1,8 +1,8 @@
 <p align="center"><img src="图标/待办软件内图标.png" width="76" alt="DeskTodo 图标"></p>
 <h1 align="center">DeskTodo</h1>
 <p align="center">一张安静留在桌面上的待办卡片。把事情记下来，按自己的节奏完成。</p>
-<p align="center"><a href="https://github.com/1242483743/DeskTodo/releases">v1.46</a> · Windows 10 / 11 x64 · <a href="LICENSE">MIT 开源</a> · 默认本地保存，无需账号</p>
-<p align="center"><a href="https://github.com/1242483743/DeskTodo/releases">下载安装版</a> · <a href="https://github.com/1242483743/DeskTodo/releases">下载免安装版</a> · <a href="https://github.com/1242483743/DeskTodo/releases/latest">最新发布</a> · <a href="使用说明.md">使用说明</a></p>
+<p align="center"><a href="https://github.com/1242483743/DeskTodo/releases/tag/v1.46">v1.46</a> · Windows 10 / 11 x64 · <a href="LICENSE">MIT 开源</a> · 默认本地保存，无需账号</p>
+<p align="center"><a href="https://github.com/1242483743/DeskTodo/releases/download/v1.46/DeskTodo-Setup-v1.46.exe">下载安装版</a> · <a href="https://github.com/1242483743/DeskTodo/releases/download/v1.46/DeskTodo-v1.46.zip">下载免安装版</a> · <a href="https://github.com/1242483743/DeskTodo/releases/latest">最新发布</a> · <a href="使用说明.md">使用说明</a></p>
 
 ## 界面预览
 
@@ -41,13 +41,11 @@
 
 ## 下载与安装
 
-> v1.46 的源码和演示图片已更新，安装包附件尚在上传，**目前还没有正式发布 v1.46 成品**。以下下载入口暂时指向现有发布列表（当前为 v1.22），待附件核验完成后再切换到 v1.46。
-
 | 下载文件 | 用途 |
 | --- | --- |
-| [DeskTodo-Setup-v1.46.exe](https://github.com/1242483743/DeskTodo/releases) | 推荐：带安装向导、开始菜单及可选桌面快捷方式 |
-| [DeskTodo-v1.46.zip](https://github.com/1242483743/DeskTodo/releases) | 免安装：完整解压后运行 `DeskTodo.exe`，保留旁边的配置文件 |
-| [SHA256SUMS.txt](https://github.com/1242483743/DeskTodo/releases) | 核对安装包和免安装包是否下载完整 |
+| [DeskTodo-Setup-v1.46.exe](https://github.com/1242483743/DeskTodo/releases/download/v1.46/DeskTodo-Setup-v1.46.exe) | 推荐：带安装向导、开始菜单及可选桌面快捷方式 |
+| [DeskTodo-v1.46.zip](https://github.com/1242483743/DeskTodo/releases/download/v1.46/DeskTodo-v1.46.zip) | 免安装：完整解压后运行 `DeskTodo.exe`，保留旁边的配置文件 |
+| [SHA256SUMS.txt](https://github.com/1242483743/DeskTodo/releases/download/v1.46/SHA256SUMS.txt) | 核对安装包和免安装包是否下载完整 |
 
 系统要求：Windows 10 / 11 **64 位**，.NET Framework **4.8**。
 
