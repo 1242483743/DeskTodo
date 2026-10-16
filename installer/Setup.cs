@@ -66,7 +66,7 @@ namespace DeskTodoSetup
                     try
                     {
                         Application app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
-                        SetupUi ui = new SetupUi(new InstallService(paths, new UserRegistration(paths)), uninstall);
+                        SetupUi ui = new SetupUi(new InstallService(paths, new UserRegistration(paths)), uninstall, selected == null);
                         app.Run(ui.Window); return 0;
                     }
                     finally { mutex.ReleaseMutex(); }
@@ -208,6 +208,25 @@ namespace DeskTodoSetup
         internal bool FailAfterFilesForTest;
         internal bool AddStartMenu = true, AddDesktop;
         internal InstallService(InstallPaths paths, IRegistration registration) { Paths = paths; this.registration = registration; }
+        internal bool FindExistingInstallation()
+        {
+            RegistrationSnapshot snapshot = registration.Capture(); object location, displayName;
+            if (!snapshot.Exists || !snapshot.Values.TryGetValue("InstallLocation", out location) ||
+                !snapshot.Values.TryGetValue("DisplayName", out displayName) || !String.Equals(displayName as string, "DeskTodo", StringComparison.OrdinalIgnoreCase)) return false;
+            string candidate = location as string;
+            if (String.IsNullOrWhiteSpace(candidate) || !Path.IsPathRooted(candidate) || candidate.StartsWith(@"\\")) return false;
+            string previous = Paths.Directory;
+            try
+            {
+                Paths.Directory = Path.GetFullPath(candidate); Paths.Validate();
+                if (File.Exists(Paths.App)) return true;
+            }
+            catch (IOException) { }
+            catch (ArgumentException) { }
+            catch (UnauthorizedAccessException) { }
+            Paths.Directory = previous;
+            return false;
+        }
         internal static Task RunOnSta(Action operation)
         {
             // Windows shortcut COM objects require an apartment suitable for shell
@@ -364,12 +383,14 @@ namespace DeskTodoSetup
         internal readonly Window Window;
         private readonly InstallService service;
         private readonly bool uninstall;
+        private readonly bool upgrading;
         private bool busy, finished;
         private int page;
         internal T Control<T>(string name) where T : class { return Window.FindName(name) as T; }
-        internal SetupUi(InstallService service, bool uninstall)
+        internal SetupUi(InstallService service, bool uninstall, bool detectExisting = true)
         {
             this.service = service; this.uninstall = uninstall;
+            upgrading = !uninstall && detectExisting && service.FindExistingInstallation();
             using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("DeskTodo.Setup.Window")) Window = (Window)XamlReader.Load(stream);
             using (MemoryStream stream = new MemoryStream(SetupProgram.Resource("Icon")))
             {
@@ -380,6 +401,15 @@ namespace DeskTodoSetup
             Control<TextBox>("InstallPath").Text = service.Paths.Directory;
             Control<TextBlock>("Subtitle").Text = "桌面上的简约待办 · v" + SetupProgram.Version;
             Control<TextBlock>("DataNote").Visibility = Visibility.Collapsed;
+            if (upgrading)
+            {
+                Control<TextBlock>("Heading").Text = "更新 DeskTodo";
+                Control<TextBlock>("Description").Text = "已检测到安装版本，将在原位置覆盖更新。";
+                Control<TextBox>("InstallPath").IsReadOnly = true;
+                Control<Button>("Browse").Visibility = Visibility.Collapsed;
+                Control<CheckBox>("StartMenuShortcut").IsChecked = InstallService.IsOwnShortcut(service.Paths.MenuLink, service.Paths.App);
+                Control<CheckBox>("DesktopShortcut").IsChecked = InstallService.IsOwnShortcut(service.Paths.DesktopLink, service.Paths.App);
+            }
             if (uninstall)
             {
                 Window.Title = "DeskTodo 卸载"; Control<TextBlock>("Heading").Text = "卸载 DeskTodo";
@@ -427,7 +457,7 @@ namespace DeskTodoSetup
             busy = true; Control<Button>("Primary").IsEnabled = false; Control<Button>("Cancel").IsEnabled = false;
             Control<Button>("Back").IsEnabled = false; Control<StackPanel>("ShortcutPage").IsEnabled = false;
             Control<ProgressBar>("Progress").Visibility = Visibility.Visible;
-            Control<TextBlock>("Status").Text = uninstall ? "正在安全卸载，待办数据不会删除…" : "正在安装；如软件已运行，将先保存并退出…";
+            Control<TextBlock>("Status").Text = uninstall ? "正在安全卸载，待办数据不会删除…" : upgrading ? "正在覆盖更新；如软件已运行，将先保存并退出…" : "正在安装；如软件已运行，将先保存并退出…";
             try
             {
                 await service.Apply(uninstall);
@@ -442,12 +472,12 @@ namespace DeskTodoSetup
             Control<StackPanel>("LocationPage").Visibility = page == 0 ? Visibility.Visible : Visibility.Collapsed;
             Control<StackPanel>("ShortcutPage").Visibility = page == 1 ? Visibility.Visible : Visibility.Collapsed;
             Control<Button>("Back").Visibility = page == 1 ? Visibility.Visible : Visibility.Collapsed;
-            Control<Button>("Primary").Content = page == 0 ? "下一步" : "安装";
+            Control<Button>("Primary").Content = page == 0 ? "下一步" : upgrading ? "覆盖更新" : "安装";
             Control<TextBlock>("Status").Text = "";
         }
         internal void ShowSuccess()
         {
-            finished = true; Control<TextBlock>("Heading").Text = uninstall ? "已卸载 DeskTodo" : "安装完成";
+            finished = true; Control<TextBlock>("Heading").Text = uninstall ? "已卸载 DeskTodo" : upgrading ? "更新完成" : "安装完成";
             Control<TextBlock>("Description").Text = uninstall ? "程序已移除，你的待办和备份仍然保留。重新安装后可继续使用。" : "DeskTodo 已准备就绪。";
             Control<StackPanel>("LocationPage").Visibility = Visibility.Collapsed; Control<StackPanel>("ShortcutPage").Visibility = Visibility.Collapsed;
             Control<Button>("Back").Visibility = Visibility.Collapsed;
@@ -462,7 +492,14 @@ namespace DeskTodoSetup
         private sealed class FakeRegistration : IRegistration
         {
             internal bool Registered;
-            public RegistrationSnapshot Capture() { return new RegistrationSnapshot { Exists = Registered }; }
+            internal string ExistingDirectory;
+            public RegistrationSnapshot Capture()
+            {
+                RegistrationSnapshot snapshot = new RegistrationSnapshot { Exists = Registered };
+                if (ExistingDirectory != null)
+                { snapshot.Values["DisplayName"] = "DeskTodo"; snapshot.Values["InstallLocation"] = ExistingDirectory; }
+                return snapshot;
+            }
             public void Register() { Registered = true; }
             public void Remove() { Registered = false; }
             public void Restore(RegistrationSnapshot snapshot) { Registered = snapshot.Exists; }
@@ -483,6 +520,26 @@ namespace DeskTodoSetup
                 InstallPaths defaultPaths = InstallPaths.ForCurrentUser(); defaultPaths.Test = true;
                 SetupUi defaultUi = new SetupUi(new InstallService(defaultPaths, new FakeRegistration()), false);
                 Render(defaultUi.Window, Path.Combine(output, "setup-default.png")); defaultUi.Window.Close();
+                string existingPath = Path.Combine(fixture, "existing-install"); Directory.CreateDirectory(existingPath);
+                File.WriteAllText(Path.Combine(existingPath, "DeskTodo.exe"), "previous app");
+                InstallPaths existingPaths = new InstallPaths { Test = true, Directory = existingPath,
+                    StartMenu = Path.Combine(fixture, "upgrade-menu"), Desktop = Path.Combine(fixture, "upgrade-desktop"),
+                    Data = paths.Data, UserSid = paths.UserSid };
+                FakeRegistration existingRegistration = new FakeRegistration { Registered = true, ExistingDirectory = existingPath };
+                InstallService existingService = new InstallService(existingPaths, existingRegistration);
+                existingService.SetDesktopShortcut(true);
+                existingPaths.Directory = Path.Combine(fixture, "unused-default");
+                SetupUi upgradeUi = new SetupUi(new InstallService(existingPaths, existingRegistration), false);
+                Check(existingPaths.Directory == existingPath && upgradeUi.Control<TextBox>("InstallPath").IsReadOnly &&
+                    upgradeUi.Control<Button>("Browse").Visibility == Visibility.Collapsed &&
+                    upgradeUi.Control<TextBlock>("Heading").Text == "更新 DeskTodo" &&
+                    upgradeUi.Control<CheckBox>("DesktopShortcut").IsChecked == true &&
+                    upgradeUi.Control<CheckBox>("StartMenuShortcut").IsChecked != true,
+                    "检测已有安装并锁定原路径，继承既有快捷方式选择");
+                upgradeUi.Control<Button>("Primary").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                Check(upgradeUi.Control<Button>("Primary").Content.ToString() == "覆盖更新", "已有安装第二页显示覆盖更新按钮");
+                Render(upgradeUi.Window, Path.Combine(output, "setup-upgrade.png"));
+                upgradeUi.Window.Close();
                 SetupUi ui = new SetupUi(service, false); Render(ui.Window, Path.Combine(output, "setup.png"));
                 Check(InstallPaths.Same(InstallPaths.ForCurrentUser().Directory, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "DeskTodo")), "默认安装到 64 位 Program Files 的 DeskTodo 文件夹");
                 Check(ui.Control<StackPanel>("LocationPage").Visibility == Visibility.Visible && ui.Control<Button>("Primary").Content.ToString() == "下一步" &&

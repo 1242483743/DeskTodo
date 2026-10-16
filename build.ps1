@@ -11,12 +11,15 @@ $taskInternalIconDirectory = (-join @(0x56FE,0x6807 | ForEach-Object { [char]$_ 
 $taskInternalIconName = (-join @(0x5F85,0x529E,0x8F6F,0x4EF6,0x5185,0x56FE,0x6807 | ForEach-Object { [char]$_ })) + '.png'
 $taskIcon = Join-Path (Join-Path $taskRoot $taskInternalIconDirectory) $taskAppIconName
 $taskInternalIcon = Join-Path (Join-Path $taskRoot $taskInternalIconDirectory) $taskInternalIconName
+$taskFloatingIconName = (-join @(0x5F85,0x529E,0x8F6F,0x4EF6,0x56FE,0x6807,0x002D,0x900F,0x660E | ForEach-Object { [char]$_ })) + '.png'
+$taskFloatingIcon = Join-Path (Join-Path $taskRoot $taskInternalIconDirectory) $taskFloatingIconName
 if (-not (Test-Path -LiteralPath $taskIcon)) { throw 'The application icon was not found.' }
 if (-not (Test-Path -LiteralPath $taskInternalIcon)) { throw 'The internal UI icon was not found.' }
+if (-not (Test-Path -LiteralPath $taskFloatingIcon)) { throw 'The floating icon was not found.' }
 $taskReadme = Get-ChildItem -LiteralPath $taskRoot -Filter '*.md' -File | Where-Object { $_.BaseName.Length -eq 4 } | Select-Object -First 1
 if (-not $taskReadme) { throw 'The user guide was not found.' }
-$taskRefs = @('System.dll', 'System.Core.dll', 'System.Runtime.Serialization.dll', 'System.Xaml.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll', 'WPF\WindowsBase.dll', 'WPF\PresentationCore.dll', 'WPF\PresentationFramework.dll')
-$taskArguments = @('/nologo', '/target:winexe', '/main:DesktopTodo.Program', '/platform:x64', '/optimize+', '/utf8output', '/warn:4', '/codepage:65001', ('/out:' + (Join-Path $taskOutput 'DeskTodo.exe')), ('/win32manifest:' + (Join-Path $taskRoot 'src\app.manifest')), ('/win32icon:' + $taskIcon), ('/resource:' + $taskInternalIcon + ',DesktopTodo.InternalIcon.png'), ('/resource:' + (Join-Path $taskRoot 'src\MainWindow.xaml') + ',DesktopTodo.MainWindow.xaml'), ('/resource:' + (Join-Path $taskRoot 'src\ReminderWindow.xaml') + ',DesktopTodo.ReminderWindow.xaml'))
+$taskRefs = @('System.dll', 'System.Core.dll', 'System.Runtime.Serialization.dll', 'System.Security.dll', 'System.Xaml.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll', 'WPF\WindowsBase.dll', 'WPF\PresentationCore.dll', 'WPF\PresentationFramework.dll')
+$taskArguments = @('/nologo', '/target:winexe', '/main:DesktopTodo.Program', '/platform:x64', '/optimize+', '/utf8output', '/warn:4', '/codepage:65001', ('/out:' + (Join-Path $taskOutput 'DeskTodo.exe')), ('/win32manifest:' + (Join-Path $taskRoot 'src\app.manifest')), ('/win32icon:' + $taskIcon), ('/resource:' + $taskInternalIcon + ',DesktopTodo.InternalIcon.png'), ('/resource:' + $taskFloatingIcon + ',DesktopTodo.FloatingIcon.png'), ('/resource:' + (Join-Path $taskRoot 'src\MainWindow.xaml') + ',DesktopTodo.MainWindow.xaml'), ('/resource:' + (Join-Path $taskRoot 'src\ReminderWindow.xaml') + ',DesktopTodo.ReminderWindow.xaml'))
 foreach ($taskRef in $taskRefs) { $taskArguments += '/reference:' + (Join-Path $taskFramework $taskRef) }
 $taskArguments += @(Get-ChildItem -LiteralPath (Join-Path $taskRoot 'src') -Filter '*.cs' | ForEach-Object { $_.FullName })
 & $taskCompiler @taskArguments

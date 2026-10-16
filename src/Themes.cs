@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Windows.Media;
 
 namespace DesktopTodo
 {
@@ -15,42 +16,27 @@ namespace DesktopTodo
     {
         internal static readonly string[] ResourceNames = { "CardBrush", "TextBrush", "MutedBrush", "LineBrush", "InputBrush", "AccentBrush", "HoverBrush" };
         internal static readonly ThemePalette[] All = {
-            new ThemePalette("forest", "森屿", "#3B795C",
-                new[] { "#FCFCFA", "#263D35", "#88938D", "#E7EBE5", "#F0F3ED", "#3B795C", "#E9F0E6" },
-                new[] { "#222B26", "#E5ECE5", "#A0ADA2", "#3A443C", "#2D3730", "#70AA81", "#3A4A3D" }),
-            new ThemePalette("ocean", "海盐", "#3E7188",
-                new[] { "#FAFCFD", "#203844", "#7C8F98", "#E2EAEF", "#EDF3F6", "#3E7188", "#E5F0F4" },
-                new[] { "#202A30", "#E7EFF2", "#9EADB4", "#35434A", "#29363C", "#70A3B9", "#344750" }),
-            new ThemePalette("lavender", "雾紫", "#716387",
-                new[] { "#FCFBFD", "#383245", "#8A8294", "#EAE6EE", "#F3F0F6", "#716387", "#EEEAF3" },
-                new[] { "#292630", "#EEEAF3", "#AAA2B3", "#45404C", "#35313D", "#9B8AB5", "#423B4B" }),
-            new ThemePalette("clay", "陶粉", "#9B6258",
-                new[] { "#FDFBF9", "#443330", "#95847F", "#EEE6E1", "#F6F0EC", "#9B6258", "#F3E7E2" },
-                new[] { "#302725", "#F2E9E5", "#B7A7A2", "#4D403C", "#3C302D", "#C88376", "#493633" }),
-            new ThemePalette("amber", "琥珀", "#98732F",
-                new[] { "#FDFCF8", "#403A2D", "#918873", "#EEE9DC", "#F7F3E9", "#98732F", "#F4EDD9" },
-                new[] { "#2E2B24", "#F1ECDD", "#ADA58D", "#4A4538", "#39352B", "#C29A4C", "#46402F" }),
-            new ThemePalette("sage", "鼠尾草", "#668477",
-                new[] { "#FBFCFA", "#2D3D37", "#839189", "#E4EAE6", "#EFF3F0", "#668477", "#E8EFEB" },
-                new[] { "#242B28", "#E8EEEA", "#A2AEA7", "#3B4540", "#2F3834", "#88A99B", "#3B4943" }),
-            new ThemePalette("indigo", "靛青", "#586C99",
-                new[] { "#FBFCFE", "#29354D", "#818BA0", "#E4E8F0", "#EFF2F7", "#586C99", "#E8EDF6" },
-                new[] { "#242832", "#E9ECF5", "#A4ABBD", "#3C4250", "#303541", "#8295C0", "#3A4254" }),
-            new ThemePalette("teal", "青黛", "#3F7E79",
-                new[] { "#FAFCFC", "#243F3D", "#7D9290", "#DFEAE8", "#ECF4F2", "#3F7E79", "#E3F0EE" },
-                new[] { "#202C2B", "#E4F0EE", "#9BAFAD", "#344846", "#293A38", "#69A8A1", "#344C49" }),
-            new ThemePalette("rose", "暮玫", "#956879",
-                new[] { "#FDFBFC", "#45343B", "#95868C", "#EEE5E8", "#F6EFF2", "#956879", "#F2E6EB" },
-                new[] { "#30272A", "#F2E9EC", "#B4A5AA", "#4C3D42", "#3B3034", "#BF899D", "#49363D" }),
-            new ThemePalette("cocoa", "可可", "#7C6A60",
-                new[] { "#FCFBFA", "#403833", "#8E8580", "#EAE5E1", "#F3F0ED", "#7C6A60", "#EEE9E5" },
-                new[] { "#2D2927", "#EEEAE7", "#AAA19B", "#48413D", "#38322F", "#A49388", "#453C37" }),
-            new ThemePalette("slate", "岩灰", "#667783",
-                new[] { "#FBFCFD", "#2E3B43", "#839098", "#E3E8EB", "#EFF2F4", "#667783", "#E8EDF0" },
-                new[] { "#242A2E", "#E8EDF0", "#A2ADB3", "#3B4449", "#2F373B", "#899BA6", "#3B484E" }),
-            new ThemePalette("sky", "霁蓝", "#4D7FA3",
-                new[] { "#FAFCFE", "#263D4E", "#7F919D", "#E0E9EF", "#ECF3F7", "#4D7FA3", "#E4EFF6" },
-                new[] { "#202A31", "#E5EEF3", "#9DADB7", "#35444D", "#2A363D", "#72A3C3", "#354A57" })
+            new ThemePalette("graphite", "石墨", "#292927",
+                new[] { "#FAFAF8", "#292927", "#6F6F69", "#E5E5E0", "#FFFFFF", "#292927", "#EFEFED" },
+                new[] { "#202020", "#EEEEEC", "#A1A19A", "#393936", "#262625", "#ECECE7", "#30302E" }),
+            new ThemePalette("forest", "森屿", "#496456",
+                new[] { "#F8FAF7", "#282E29", "#687264", "#E2E7E0", "#FDFEFC", "#496456", "#EBF0E8" },
+                new[] { "#202421", "#EBEEE9", "#A1ADA0", "#373E36", "#272D27", "#B6C6BC", "#303830" }),
+            new ThemePalette("ocean", "海盐", "#4F6572",
+                new[] { "#F7F9FA", "#282D31", "#66727A", "#E1E6E8", "#FDFEFE", "#4F6572", "#EAF0F2" },
+                new[] { "#202325", "#ECEEF0", "#A3ACB0", "#373D40", "#272D30", "#BCC8CE", "#30373B" }),
+            new ThemePalette("coral", "珊瑚", "#82635D",
+                new[] { "#FAF8F6", "#302B29", "#766B66", "#E8E1DD", "#FFFEFD", "#82635D", "#F2EBE7" },
+                new[] { "#262221", "#F0ECE9", "#B2A7A1", "#443B38", "#302A28", "#D7BDB5", "#3A312D" }),
+            new ThemePalette("sun", "晴黄", "#796B4D",
+                new[] { "#FAF9F4", "#302D27", "#716C5F", "#E7E4D9", "#FFFEFB", "#796B4D", "#F1EEE3" },
+                new[] { "#25241F", "#F0EDE5", "#B1AC9D", "#413D32", "#2F2C24", "#D4C8AA", "#39352B" }),
+            new ThemePalette("mint", "薄荷", "#4E6A63",
+                new[] { "#F6FAF8", "#28312E", "#63746C", "#DFE8E3", "#FCFEFD", "#4E6A63", "#E8F1ED" },
+                new[] { "#1F2523", "#E9F0EC", "#9FADA6", "#343F39", "#26302B", "#B3CAC2", "#2F3A33" }),
+            new ThemePalette("sky", "霁蓝", "#55677D",
+                new[] { "#F7F8FB", "#2B2E35", "#646E80", "#E1E4EB", "#FDFEFF", "#55677D", "#EBEEF4" },
+                new[] { "#212329", "#ECEEF4", "#A3ABBA", "#393E4A", "#282D36", "#BEC8D9", "#323948" })
         };
         private static readonly Dictionary<string, ThemePalette> byId = Build();
         private static Dictionary<string, ThemePalette> Build()
@@ -61,6 +47,29 @@ namespace DesktopTodo
         }
         internal static string Normalize(string id) { return id != null && byId.ContainsKey(id) ? id.ToLowerInvariant() : "forest"; }
         internal static ThemePalette Get(string id) { return byId[Normalize(id)]; }
+        private static double Channel(byte value)
+        {
+            double number = value / 255.0;
+            return number <= .04045 ? number / 12.92 : Math.Pow((number + .055) / 1.055, 2.4);
+        }
+        private static double Luminance(string hex)
+        {
+            Color colour = (Color)ColorConverter.ConvertFromString(hex);
+            return .2126 * Channel(colour.R) + .7152 * Channel(colour.G) + .0722 * Channel(colour.B);
+        }
+        internal static double Contrast(string first, string second)
+        {
+            double a = Luminance(first), b = Luminance(second);
+            return (Math.Max(a, b) + .05) / (Math.Min(a, b) + .05);
+        }
+        internal static string AccentText(string id, bool dark)
+        {
+            ThemePalette palette = ThemeCatalog.Get(id);
+            string accent = (dark ? palette.Dark : palette.Light)[5];
+            return AccentForeground(accent);
+        }
+        internal static string AccentForeground(string accent)
+        { return Contrast(accent, "#FFFFFF") >= Contrast(accent, "#202020") ? "#FFFFFF" : "#202020"; }
     }
 
     internal struct ReminderDue

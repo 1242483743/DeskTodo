@@ -49,14 +49,23 @@ namespace DesktopTodo
         }
         public void Save(AppState state)
         {
+            SaveSnapshot(Serialize(state));
+        }
+        internal static byte[] Serialize(AppState state)
+        {
             state.Validate();
+            using (MemoryStream stream = new MemoryStream())
+            { new DataContractJsonSerializer(typeof(AppState)).WriteObject(stream, state); return stream.ToArray(); }
+        }
+        internal void SaveSnapshot(byte[] snapshot)
+        {
             Directory.CreateDirectory(DirectoryPath);
             string temporary = DataPath + ".tmp-" + Guid.NewGuid().ToString("N");
             try
             {
                 using (FileStream stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
-                    new DataContractJsonSerializer(typeof(AppState)).WriteObject(stream, state);
+                    stream.Write(snapshot, 0, snapshot.Length);
                     stream.Flush(true);
                 }
                 if (File.Exists(DataPath))

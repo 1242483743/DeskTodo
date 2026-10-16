@@ -18,7 +18,8 @@ namespace DesktopTodo
         {
             Item = item;
             using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("DesktopTodo.ReminderWindow.xaml"))
-                Window = (Window)XamlReader.Load(stream);
+            using (StreamReader reader = new StreamReader(stream))
+                Window = (Window)XamlReader.Parse(reader.ReadToEnd().Replace("assembly=DeskTodo", "assembly=" + Assembly.GetExecutingAssembly().GetName().Name));
             Window.FindName("ReminderIcon").As<Image>().Source = UiAssets.InternalIcon;
             ApplyTheme(state);
             Window.FindName("ReminderTime").As<TextBlock>().Text = DateTime.Now.ToString("M月d日 HH:mm");
@@ -35,6 +36,7 @@ namespace DesktopTodo
             string[] colors = state.DarkMode ? palette.Dark : palette.Light;
             for (int i = 0; i < ThemeCatalog.ResourceNames.Length; i++)
                 Window.Resources[ThemeCatalog.ResourceNames[i]] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors[i]));
+            Window.Resources["AccentTextBrush"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(ThemeCatalog.AccentText(state.ThemeId, state.DarkMode)));
         }
         internal void Show()
         {

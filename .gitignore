@@ -1,6 +1,7 @@
 # Generated programs and installers belong in Releases, not source commits.
 dist/
 release/
+旧版本/
 build-v*/
 qa/
 staging/

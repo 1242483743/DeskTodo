@@ -54,20 +54,41 @@ namespace DesktopTodo
         {
             public IntPtr Handle;
             public System.Drawing.Rectangle Bounds, Work;
+            public string DeviceName;
+            public bool IsPrimary;
         }
-        [StructLayout(LayoutKind.Sequential)] private struct MonitorInfo { public int Size; public Rect Bounds, Work; public uint Flags; }
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct MonitorInfo
+        {
+            public int Size;
+            public Rect Bounds, Work;
+            public uint Flags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+        }
         private delegate bool MonitorProc(IntPtr monitor, IntPtr dc, IntPtr rect, IntPtr value);
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromRect(ref Rect rect, uint flags);
-        [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+        [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
         [DllImport("user32.dll")] private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorProc callback, IntPtr value);
+        [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
+        internal static double MonitorScale(IntPtr monitor)
+        {
+            try
+            {
+                uint x, y;
+                using (new PhysicalDpiScope()) if (GetDpiForMonitor(monitor, 0, out x, out y) == 0 && x >= 96) return x / 96.0;
+            }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
+            return 1;
+        }
         private static MonitorArea ReadMonitor(IntPtr handle)
         {
             MonitorInfo info = new MonitorInfo { Size = Marshal.SizeOf(typeof(MonitorInfo)) };
             if (!GetMonitorInfo(handle, ref info)) throw new Win32Exception("无法读取显示器工作区");
             return new MonitorArea { Handle = handle,
                 Bounds = System.Drawing.Rectangle.FromLTRB(info.Bounds.Left, info.Bounds.Top, info.Bounds.Right, info.Bounds.Bottom),
-                Work = System.Drawing.Rectangle.FromLTRB(info.Work.Left, info.Work.Top, info.Work.Right, info.Work.Bottom) };
+                Work = System.Drawing.Rectangle.FromLTRB(info.Work.Left, info.Work.Top, info.Work.Right, info.Work.Bottom),
+                DeviceName = info.DeviceName, IsPrimary = (info.Flags & 1) != 0 };
         }
         internal static MonitorArea MonitorAt(Point point)
         { using (new PhysicalDpiScope()) return ReadMonitor(MonitorFromPoint(point, 2)); }
@@ -199,12 +220,23 @@ namespace DesktopTodo
             if (!Native.IsWindow(Handle)) return;
             this.screenX = screenX; this.screenY = screenY;
             pixelWidth = width; pixelHeight = height; hasGeometry = true;
-            if (Native.GetWindowRect(Handle, out current) && current.Left == screenX && current.Top == screenY &&
+            bool hasCurrent = Native.GetWindowRect(Handle, out current);
+            if (hasCurrent && current.Left == screenX && current.Top == screenY &&
                 current.Right - current.Left == width && current.Bottom - current.Top == height)
                 return;
             Native.Point point = new Native.Point { X = screenX, Y = screenY };
             if (Parent != IntPtr.Zero) Native.ScreenToClient(Parent, ref point);
-            if (!Native.SetWindowPos(Handle, IntPtr.Zero, point.X, point.Y, width, height, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE))
+            uint flags = Native.SWP_NOZORDER | Native.SWP_NOACTIVATE;
+            if (hasCurrent && current.Right - current.Left == width && current.Bottom - current.Top == height) flags |= 1; // SWP_NOSIZE
+            if (Parent == IntPtr.Zero && hasCurrent && (current.Left != screenX || current.Top != screenY) && (flags & 1) == 0)
+            {
+                // Let WPF consume the target monitor's DPI before applying its
+                // physical size. A combined move+resize first reads that size at
+                // the old DPI, then scales it a second time in WM_DPICHANGED.
+                if (!Native.SetWindowPos(Handle, IntPtr.Zero, point.X, point.Y, 0, 0, flags | 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "无法移动窗口");
+            }
+            if (!Native.SetWindowPos(Handle, IntPtr.Zero, point.X, point.Y, width, height, flags))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "无法调整窗口位置或大小");
             }
         }

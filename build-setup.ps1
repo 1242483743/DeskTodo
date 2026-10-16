@@ -1,4 +1,4 @@
-param([string]$AppDirectory = 'build-v1.22', [string]$OutputDirectory = 'release', [switch]$Test)
+param([string]$AppDirectory = 'dist', [string]$OutputDirectory = 'release', [switch]$Test)
 $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 $taskFramework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'

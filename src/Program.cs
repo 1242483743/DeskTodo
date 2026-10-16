@@ -46,15 +46,20 @@ namespace DesktopTodo
                 {
                     if (!created)
                     {
-                        // The running instance observes this marker and brings itself back.
-                        Directory.CreateDirectory(dataDirectory);
-                        File.WriteAllText(Path.Combine(dataDirectory, "show.request"), DateTime.UtcNow.ToString("o"));
+                        // A second automatic launch must not bypass the display gate.
+                        if (Array.IndexOf(args, "--startup") < 0)
+                        {
+                            Directory.CreateDirectory(dataDirectory);
+                            File.WriteAllText(Path.Combine(dataDirectory, "show.request"), DateTime.UtcNow.ToString("o"));
+                        }
                         return 0;
                     }
                     // An exit request targets the instance running at that moment, not a
                     // later replacement after an unresponsive old instance was closed.
                     string staleExit = Path.Combine(dataDirectory, "exit.request");
                     if (File.Exists(staleExit)) File.Delete(staleExit);
+                    string staleShow = Path.Combine(dataDirectory, "show.request");
+                    if (File.Exists(staleShow)) File.Delete(staleShow);
                     AppState state;
                     string initialState = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "initial-state.json");
                     if (!File.Exists(storage.DataPath) && Value(args, "--data-dir") == null && File.Exists(initialState))
@@ -63,7 +68,23 @@ namespace DesktopTodo
                         storage.Log("First-run state imported; existing data is never overwritten.");
                     }
                     else state = storage.Load();
-                    if (Array.IndexOf(args, "--startup") >= 0) state.Locked = true;
+                    bool automaticStart = Array.IndexOf(args, "--startup") >= 0;
+                    if (automaticStart) state.Locked = true;
+                    if (state.StartOnSecondaryOnly)
+                    {
+                        Func<Native.MonitorArea> selected = delegate
+                        { return SecondaryStartup.Current(state.SecondaryDeviceName); };
+                        if (automaticStart && selected() == null)
+                        {
+                            storage.Log("Waiting for the selected secondary display before automatic startup.");
+                            if (!SecondaryStartup.WaitForDisplay(dataDirectory, selected)) return 0;
+                        }
+                        Native.MonitorArea monitor = selected();
+                        if (monitor != null) SecondaryStartup.Restore(state, monitor);
+                        // Both manual and automatic launch show the card. A manual
+                        // launch without a display remains available for settings.
+                        state.MiniMode = false;
+                    }
                     Application app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
                     Controller controller = new Controller(app, storage, state, Array.IndexOf(args, "--windowed") >= 0);
                     app.DispatcherUnhandledException += delegate(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -97,20 +118,43 @@ namespace DesktopTodo
         private DispatcherTimer timer;
         private ReminderPopup reminder;
         private TrayMenu trayMenu;
+        private MiniBubble mini;
+        private LanService lanService;
+        private LanAdminWindow lanAdmin;
+        private GlobalHotkeys hotkeys;
         private bool exiting, hidden, rebuilding, dirty, disposed;
+        private bool secondaryWasAvailable;
+        private string previousSelectedSecondaryName;
         private DateTime lastSaveAttempt;
         private IntPtr lastHost;
+        private readonly object saveGate = new object();
+        private int settingsSaveGeneration;
+        private DispatcherTimer settingsSaveTimer;
+        private bool settingsPending;
+        internal Action<byte[]> SettingsSnapshotWriterForTest;
         internal TodoWindow CurrentUi { get { return ui; } }
         public Controller(Application app, Storage storage, AppState state, bool forceWindowed)
         { this.app = app; this.storage = storage; this.state = state; this.forceWindowed = forceWindowed; }
         public void Start()
         {
+            Native.MonitorArea initialSecondary = SecondaryStartup.Current(state.SecondaryDeviceName);
+            secondaryWasAvailable = initialSecondary != null;
+            previousSelectedSecondaryName = initialSecondary == null ? null : initialSecondary.DeviceName;
             try { if (Native.TestSurface == IntPtr.Zero && Startup.MigrateLegacyCommand()) storage.Log("Startup command migrated to DeskTodo.exe."); }
             catch (Exception e) { storage.Log("Startup command migration skipped: " + e.Message); }
+            hidden = state.MiniMode;
             CreateWindow();
+            if (Native.TestSurface == IntPtr.Zero)
+            {
+                hotkeys = new GlobalHotkeys(delegate { Dispatch(Show); }, delegate { Dispatch(delegate { if (state.MiniMode) Show(); else EnterMini(); }); });
+                string shortcutError = hotkeys.Configure(state.ShowHotkey, state.MiniHotkey);
+                if (shortcutError != null) { storage.Log("Shortcuts: " + shortcutError); ui.Control<System.Windows.Controls.TextBlock>("HotkeyStatus").Text = shortcutError; }
+            }
             tray = new Forms.NotifyIcon { Text = "DeskTodo", Icon = CreateTrayIcon(), Visible = !state.HideTray };
             tray.MouseUp += delegate(object sender, Forms.MouseEventArgs e) { if (e.Button == Forms.MouseButtons.Right) Dispatch(delegate { OpenTrayMenu(); }); };
             tray.DoubleClick += delegate { Dispatch(Show); };
+            if (state.MiniMode) ShowMiniBubble();
+            SyncLanService();
             timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             timer.Tick += delegate { Tick(); }; timer.Start();
             bool initializedReminder = false;
@@ -136,11 +180,20 @@ namespace DesktopTodo
             ui.Desktop.Log = storage.Log;
             using (System.Drawing.Icon icon = CreateTrayIcon())
                 ui.Window.Icon = Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty, System.Windows.Media.Imaging.BitmapSizeOptions.FromEmptyOptions());
-            ui.Changed = Save; ui.ExitRequested = Exit; ui.HideRequested = Hide;
+            ui.Changed = Save; ui.SettingsChanged = QueueSettingsSave; ui.ExitRequested = Exit; ui.HideRequested = Hide;
+            ui.SecondaryPreferenceChanged = delegate
+            {
+                Native.MonitorArea current = SecondaryStartup.Current(state.SecondaryDeviceName);
+                secondaryWasAvailable = current != null;
+                previousSelectedSecondaryName = current == null ? null : current.DeviceName;
+            };
+            ui.MiniRequested = EnterMini;
             ui.ModeChanged = delegate { Dispatch(SwitchMode); }; ui.GetStartup = delegate { return Startup.IsEnabled; };
             ui.RebuildRequested = delegate { Dispatch(Rebuild); };
             ui.SetStartup = delegate(bool enabled) { Startup.SetEnabled(enabled); };
             ui.ExportRequested = Export; ui.ImportRequested = Import;
+            ui.LanAdminRequested = OpenLanAdmin;
+            ui.ConfigureShortcutsRequested = delegate(string showKey, string miniKey) { return hotkeys == null ? null : hotkeys.Configure(showKey, miniKey); };
             ui.Window.SourceInitialized += delegate
             {
                 created.InitializeNative(forceWindowed, attachmentFallback, requestedSurface); lastHost = created.Desktop.Parent;
@@ -162,7 +215,7 @@ namespace DesktopTodo
             else Native.ShowWindow(ui.Desktop.Handle, 4);
             ui.PlaceOnScreen(false);
             storage.Log("Shown: " + ui.Desktop.Describe());
-            ui.IsSaved = !dirty; ui.RefreshStatus();
+            ui.IsSaved = !dirty; ui.IsSavePending = settingsPending; ui.RefreshStatus();
         }
         private void Rebuild()
         {
@@ -188,7 +241,7 @@ namespace DesktopTodo
             if (state.DesktopMode && !forceWindowed && !ui.Desktop.IsAttached && !ui.IsAttachmentFallback)
             {
                 state.DesktopMode = false; Rebuild();
-                ui.ShowNotice("桌面挂载失败", "已恢复窗口模式，可稍后在设置中重新嵌入桌面。");
+                ui.ShowNotice("桌面挂载失败", "已恢复为可操作的窗口模式。DeskTodo 会等待 Explorer 桌面恢复并自动重新嵌入，也可以在设置中关闭后重新开启“嵌入桌面”。");
             }
             lastHost = ui.Desktop.Parent; Save(); ui.RefreshStatus();
         }
@@ -214,7 +267,16 @@ namespace DesktopTodo
                         Rebuild();
                     }
                 }
-                if (dirty && DateTime.UtcNow - lastSaveAttempt > TimeSpan.FromSeconds(10)) Save();
+                // SystemEvents can arrive while the display driver still reports an
+                // intermediate topology. Retry unobtrusively until the chosen screen
+                // is visible, without moving a card already on a healthy display.
+                if (state.StartOnSecondaryOnly && UpdateSecondaryAvailability())
+                {
+                    ui.PlaceOnScreen(false); ui.RememberGeometry(); Save(); ui.RefreshSettingsForTray();
+                }
+                // A slow in-flight settings write must never turn the maintenance
+                // timer into a UI-thread wait on the file gate.
+                if (dirty && !settingsPending && DateTime.UtcNow - lastSaveAttempt > TimeSpan.FromSeconds(10)) Save();
                 CheckReminder();
                 ui.RefreshStatus();
             }
@@ -222,10 +284,79 @@ namespace DesktopTodo
         }
         private void Save()
         {
+            if (settingsSaveTimer != null) settingsSaveTimer.Stop();
+            Interlocked.Increment(ref settingsSaveGeneration);
+            settingsPending = false; ui.IsSavePending = false;
             ApplyTrayVisibility();
             dirty = true; lastSaveAttempt = DateTime.UtcNow;
-            try { storage.Save(state); dirty = false; ui.IsSaved = true; ui.SaveError = null; }
-            catch (Exception e) { ui.IsSaved = false; ui.SaveError = e.Message; storage.Log("Save failed: " + e.Message); }
+            long previousSavedAt = state.LastSavedAt;
+            long previousRevision = state.DataRevision;
+            state.LastSavedAt = DateTime.UtcNow.Ticks;
+            state.DataRevision++;
+            try { lock (saveGate) storage.Save(state); dirty = false; ui.IsSaved = true; ui.SaveError = null; SyncLanService(); }
+            catch (Exception e) { state.LastSavedAt = previousSavedAt; state.DataRevision = previousRevision; ui.IsSaved = false; ui.SaveError = e.Message; storage.Log("Save failed: " + e.Message); }
+            ui.RefreshStatus();
+        }
+        private void QueueSettingsSave()
+        {
+            if (exiting || disposed) return;
+            Interlocked.Increment(ref settingsSaveGeneration);
+            state.DataRevision++; dirty = true; settingsPending = true; lastSaveAttempt = DateTime.UtcNow;
+            ApplyTrayVisibility();
+            ui.IsSaved = false; ui.IsSavePending = true; ui.SaveError = null; ui.RefreshStatus();
+            if (settingsSaveTimer == null)
+            {
+                settingsSaveTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(250) };
+                settingsSaveTimer.Tick += delegate { BeginSettingsSave(); };
+            }
+            settingsSaveTimer.Stop(); settingsSaveTimer.Start();
+        }
+        internal void BeginSettingsSave()
+        {
+            if (settingsSaveTimer != null) settingsSaveTimer.Stop();
+            if (exiting || disposed || !settingsPending) return;
+            int generation = settingsSaveGeneration;
+            long savedAt = DateTime.UtcNow.Ticks, previousSavedAt = state.LastSavedAt;
+            byte[] snapshot;
+            lastSaveAttempt = DateTime.UtcNow;
+            try
+            {
+                // Copy on the UI thread; the worker never traverses mutable tasks
+                // or controls. Its byte snapshot is independent of later edits.
+                state.LastSavedAt = savedAt;
+                try { snapshot = Storage.Serialize(state); }
+                finally { state.LastSavedAt = previousSavedAt; }
+            }
+            catch (Exception e) { FinishSettingsSave(generation, savedAt, e); return; }
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                Exception error = null;
+                try
+                {
+                    lock (saveGate)
+                    {
+                        // A direct save/exit or newer change invalidates queued old
+                        // snapshots. Serialize writes so an old file cannot win.
+                        if (generation != Volatile.Read(ref settingsSaveGeneration)) return;
+                        if (SettingsSnapshotWriterForTest != null) SettingsSnapshotWriterForTest(snapshot);
+                        else storage.SaveSnapshot(snapshot);
+                    }
+                }
+                catch (Exception e) { error = e; }
+                try
+                {
+                    if (!disposed && !app.Dispatcher.HasShutdownStarted)
+                        app.Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(delegate { FinishSettingsSave(generation, savedAt, error); }));
+                }
+                catch (InvalidOperationException) { } // Dispatcher may shut down between the check and posting.
+            });
+        }
+        private void FinishSettingsSave(int generation, long savedAt, Exception error)
+        {
+            if (disposed || exiting || generation != settingsSaveGeneration) return;
+            settingsPending = false; ui.IsSavePending = false;
+            if (error == null) { state.LastSavedAt = savedAt; dirty = false; ui.IsSaved = true; ui.SaveError = null; }
+            else { dirty = true; ui.IsSaved = false; ui.SaveError = error.Message; storage.Log("Settings save failed: " + error.Message); }
             ui.RefreshStatus();
         }
         private void CheckReminder()
@@ -253,11 +384,17 @@ namespace DesktopTodo
         internal void Show()
         {
             if (exiting || disposed) return;
+            if (state.MiniMode) { ExitMini(); return; }
+            bool wasHidden = hidden;
             hidden = false;
             if (ui == null || !ui.IsReady || !Native.IsWindow(ui.Desktop.Handle)) { Rebuild(); return; }
-            ui.Window.Show(); Native.ShowWindow(ui.Desktop.Handle, 4); ui.PlaceOnScreen(false);
-            // An explicit show request is allowed to raise the card once, without making it topmost.
-            Native.SetWindowPos(ui.Desktop.Handle, IntPtr.Zero, 0, 0, 0, 0, 0x1 | 0x2 | Native.SWP_NOACTIVATE);
+            if (wasHidden || !ui.Window.IsVisible)
+            {
+                ui.PlaceOnScreen(false);
+                ui.Window.Show();
+                // An explicit restore raises the card once without making it topmost.
+                Native.SetWindowPos(ui.Desktop.Handle, IntPtr.Zero, 0, 0, 0, 0, 0x1 | 0x2 | Native.SWP_NOACTIVATE);
+            }
             if (!ui.Desktop.IsAttached) ui.Window.Activate();
         }
         internal void Hide()
@@ -271,8 +408,44 @@ namespace DesktopTodo
         private void ApplyTrayVisibility()
         {
             if (tray == null) return;
-            if (state.HideTray && hidden) Show();
+            if (state.HideTray && hidden && !state.MiniMode) Show();
             tray.Visible = !state.HideTray;
+        }
+
+        internal void EnterMini()
+        {
+            if (exiting || disposed || state.MiniMode || ui == null || !ui.IsReady) return;
+            ui.RememberGeometry();
+            hidden = true; state.MiniMode = true;
+            if (state.DesktopMode && !forceWindowed)
+            {
+                state.DesktopMode = false;
+                SwitchMode();
+            }
+            else ui.Window.Hide();
+            Save(); ShowMiniBubble();
+        }
+
+        private void ShowMiniBubble()
+        {
+            if (mini != null) mini.Dispose();
+            mini = new MiniBubble(state, delegate { Dispatch(ExitMini); }, delegate { Save(); });
+            mini.Show();
+        }
+
+        internal void ExitMini()
+        {
+            if (exiting || disposed) return;
+            MiniBubble closing = mini; mini = null;
+            if (closing != null) closing.Dispose();
+            state.MiniMode = false; hidden = false; Save();
+            if (ui == null || !ui.IsReady || !Native.IsWindow(ui.Desktop.Handle)) { Rebuild(); return; }
+            // Position the hidden surface before showing it. Animating Window.Opacity
+            // on a reparented layered HWND can briefly expose an unpainted frame.
+            ui.PlaceOnScreen(false);
+            ui.Window.Opacity = 1;
+            ui.Window.Show();
+            if (!ui.Desktop.IsAttached) ui.Window.Activate();
         }
         internal bool TrayVisible { get { return tray != null && tray.Visible; } }
         internal void HideTray() { if (exiting || disposed) return; state.HideTray = true; Save(); Show(); ui.RefreshSettingsForTray(); }
@@ -296,7 +469,7 @@ namespace DesktopTodo
             ui.RememberGeometry(); Save();
             if (dirty)
             {
-                MessageBox.Show("仍有未保存的修改，请检查磁盘空间或文件权限，再点击“重试保存”。软件暂不退出，以免丢失事项。", "DeskTodo", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("仍有未保存的修改，请检查磁盘空间或文件权限。软件暂不退出，以免丢失事项。", "DeskTodo", MessageBoxButton.OK, MessageBoxImage.Warning);
                 Show(); return;
             }
             exiting = true; Dispose(); ui.Window.Close(); app.Shutdown();
@@ -339,20 +512,201 @@ namespace DesktopTodo
             // A backup restores content and appearance, while the current computer keeps
             // its safe desktop/window mode, coordinates and dimensions.
             target.Items = imported.Items;
+            target.Groups = imported.Groups;
             target.Title = imported.Title; target.ThemeId = imported.ThemeId; target.DarkMode = imported.DarkMode;
+            target.Language = imported.Language; target.PendingSort = imported.PendingSort;
+            target.WindowOpacityPercent = imported.WindowOpacityPercent; target.MiniAlwaysOnTop = imported.MiniAlwaysOnTop;
+            target.MiniIconOpacityPercent = imported.MiniIconOpacityPercent;
+            target.ShowCompactButton = imported.ShowCompactButton;
+            target.ActiveGroupId = imported.ActiveGroupId;
+            target.DisableGroups = imported.DisableGroups; target.CollapsedGroupIds = imported.CollapsedGroupIds;
             target.HideItemTimes = imported.HideItemTimes; target.ShowItemDates = imported.ShowItemDates;
+            // Hotkeys belong to this computer; importing another user's backup
+            // must not silently replace local system-wide registrations.
             target.ShowMinimizeButton = imported.ShowMinimizeButton; target.ShowCloseButton = imported.ShowCloseButton;
             target.DefaultCorner = imported.DefaultCorner; target.DefaultScalePercent = imported.DefaultScalePercent;
             target.Validate();
+        }
+
+        private void SyncLanService()
+        {
+            if (disposed || exiting) return;
+            if (Native.TestSurface != IntPtr.Zero) return; // Isolated UI QA never publishes a LAN listener.
+            if (!state.LanSharingEnabled)
+            {
+                if (lanService != null) { LanService closing = lanService; lanService = null; closing.Dispose(); }
+                return;
+            }
+            if (lanService != null) return;
+            try
+            {
+                lanService = new LanService(CreateLanPeer, HandleLanRequest, storage.Log);
+                storage.Log("LAN management enabled on TCP port " + lanService.Port + ".");
+            }
+            catch (Exception e)
+            {
+                state.LanSharingEnabled = false;
+                try { storage.Save(state); } catch { }
+                storage.Log("LAN management could not start: " + e.Message);
+                if (ui != null) { ui.RefreshSettingsForTray(); ui.ShowNotice("局域网管理未能开启", "请确认端口没有被其他程序占用，并在 Windows 防火墙中允许 DeskTodo 使用专用网络。\n\n" + e.Message); }
+            }
+        }
+
+        private LanPeer CreateLanPeer()
+        {
+            LanPeer peer = null;
+            app.Dispatcher.Invoke(new Action(delegate
+            {
+                Version version = Assembly.GetExecutingAssembly().GetName().Version;
+                peer = new LanPeer { InstanceId = state.LanInstanceId, DisplayName = state.LanDisplayName, MachineName = Environment.MachineName, Version = version.Major + "." + version.Minor };
+            }));
+            return peer;
+        }
+
+        private LanSnapshot CreateLanSnapshot()
+        {
+            LanSnapshot snapshot = new LanSnapshot { Revision = state.DataRevision, Title = state.Title,
+                PendingSort = state.PendingSort, DisableGroups = state.DisableGroups };
+            foreach (TodoGroup group in state.OrderedGroups) snapshot.Groups.Add(new LanGroupInfo { Id = group.Id, Name = group.Name, Pinned = group.Pinned });
+            foreach (TodoItem item in state.Items.Where(i => !i.Deleted)) snapshot.Tasks.Add(new LanTaskInfo
+            {
+                Id = item.Id, Text = item.Text, GroupId = item.GroupId, Completed = item.IsCompleted,
+                CreatedAt = item.CreatedAt, CompletedAt = item.CompletedAt, Pinned = item.Pinned, SortOrder = item.SortOrder,
+                ReminderIntervalMinutes = item.ReminderIntervalMinutes, DailyReminderMinutesPlusOne = item.DailyReminderMinutesPlusOne,
+                ReminderManaged = item.ReminderManaged
+            });
+            return snapshot;
+        }
+
+        private LanResponse HandleLanRequest(LanRequest request)
+        {
+            LanResponse response = null;
+            app.Dispatcher.Invoke(new Action(delegate
+            {
+                if (request == null || !state.LanSharingEnabled) { response = LanResponse.Fail("对方未开启局域网管理。"); return; }
+                if (!String.Equals((request.AccessCode ?? "").Trim(), state.LanAccessCode, StringComparison.OrdinalIgnoreCase)) { response = LanResponse.Fail("管理口令不正确。"); return; }
+                try
+                {
+                    string operation = (request.Operation ?? "").ToLowerInvariant();
+                    if (operation == "snapshot")
+                    {
+                        // Always authenticate before checking revisions. Unchanged
+                        // polls do not allocate/serialize the entire task history.
+                        response = new LanResponse { Success = true,
+                            Snapshot = request.KnownRevisionPlusOne > 0 && request.KnownRevisionPlusOne - 1 == state.DataRevision
+                                ? null : CreateLanSnapshot() };
+                        return;
+                    }
+                    string groupId = String.IsNullOrWhiteSpace(request.GroupId) ? null : request.GroupId;
+                    if (groupId != null && !state.Groups.Any(g => g.Id == groupId))
+                    {
+                        if (operation == "reorder" && String.IsNullOrWhiteSpace(request.TargetId))
+                            throw new InvalidOperationException("目标分组已不存在，请刷新后重试。");
+                        groupId = null;
+                    }
+                    if (request.ExpectedRevisionPlusOne > 0 && request.ExpectedRevisionPlusOne - 1 != state.DataRevision)
+                        throw new InvalidOperationException("对方待办刚有变化，请刷新后重试，未覆盖其他人的修改。");
+                    if (operation == "reorder-group")
+                    {
+                        if (state.DisableGroups) throw new InvalidOperationException("对方已关闭分组。");
+                        if (!ui.CanMoveGroup(request.ItemId, request.TargetId)) throw new InvalidOperationException("只能在相同置顶状态的分组之间调整顺序。");
+                        ui.MoveGroup(request.ItemId, request.TargetId, request.After);
+                        response = new LanResponse { Success = true, Snapshot = CreateLanSnapshot() }; return;
+                    }
+                    if (operation == "add")
+                    {
+                        TodoItem added = state.Add(request.Text, groupId);
+                        if (added == null) throw new InvalidOperationException("待办内容不能为空。");
+                        if (request.Completed) added.CompletedAt = DateTime.UtcNow.Ticks;
+                        ui.NotifyChanged(); ui.Refresh();
+                    }
+                    else
+                    {
+                        TodoItem item = state.Items.FirstOrDefault(i => !i.Deleted && i.Id == request.ItemId);
+                        if (item == null) throw new InvalidOperationException("这条待办已不存在，请刷新后重试。");
+                        if (operation == "delete") ui.Remove(item);
+                        else if (operation == "reminder")
+                        {
+                            if (item.IsCompleted) throw new InvalidOperationException("请给未完成待办设置提醒。");
+                            if (request.ReminderIntervalMinutes < 0 || request.ReminderIntervalMinutes > 10080 ||
+                                request.DailyReminderMinutesPlusOne < 0 || request.DailyReminderMinutesPlusOne > 1440)
+                                throw new InvalidOperationException("提醒时间无效。");
+                            item.ReminderIntervalMinutes = request.ReminderIntervalMinutes;
+                            item.DailyReminderMinutesPlusOne = request.DailyReminderMinutesPlusOne;
+                            item.ReminderManaged = request.ReminderManaged && (item.ReminderIntervalMinutes > 0 || item.DailyReminderMinutesPlusOne > 0);
+                            item.LastIntervalReminderAt = item.ReminderIntervalMinutes > 0 ? DateTime.UtcNow.Ticks : 0;
+                            item.LastDailyReminderDate = null; item.ReminderSnoozeUntil = 0;
+                            ui.NotifyChanged(); ui.Refresh();
+                        }
+                        else if (operation == "reorder")
+                        {
+                            TodoItem target = state.Pending.FirstOrDefault(t => t.Id == request.TargetId);
+                            if (item.IsCompleted || item == target || (target != null && item.Pinned != target.Pinned) ||
+                                (target == null && (!String.IsNullOrWhiteSpace(request.TargetId) || state.DisableGroups)))
+                                throw new InvalidOperationException("只能在相同置顶状态的未完成待办之间拖动。");
+                            System.Collections.Generic.List<TodoItem> order = state.Pending.ToList();
+                            if (!state.DisableGroups) item.GroupId = target == null ? groupId : target.GroupId;
+                            order.Remove(item);
+                            int index = target == null ? order.FindLastIndex(t => String.Equals(t.GroupId ?? "", item.GroupId ?? "", StringComparison.Ordinal) && t.Pinned == item.Pinned) + 1
+                                : order.IndexOf(target) + (request.After ? 1 : 0);
+                            order.Insert(Math.Max(0, Math.Min(index, order.Count)), item);
+                            ui.ApplyVisibleManualOrder(order); ui.NotifyChanged(); ui.Refresh();
+                        }
+                        else if (operation == "update")
+                        {
+                            string text = (request.Text ?? "").Trim();
+                            if (text.Length == 0 || text.Length > 500) throw new InvalidOperationException("待办内容须为 1–500 个字。");
+                            item.Text = text; item.GroupId = groupId;
+                            if (request.Completed != item.IsCompleted)
+                            {
+                                state.Toggle(item);
+                                if (!item.IsCompleted && item.ReminderIntervalMinutes > 0) item.LastIntervalReminderAt = DateTime.UtcNow.Ticks;
+                            }
+                            ui.NotifyChanged(); ui.Refresh();
+                        }
+                        else throw new InvalidOperationException("不支持的操作。");
+                    }
+                    response = new LanResponse { Success = true, Snapshot = CreateLanSnapshot() };
+                }
+                catch (Exception e) { response = LanResponse.Fail(e.Message); }
+            }));
+            return response;
+        }
+
+        private void OpenLanAdmin()
+        {
+            if (lanAdmin == null || !lanAdmin.Window.IsLoaded)
+            {
+                lanAdmin = new LanAdminWindow(state, storage.DirectoryPath);
+                lanAdmin.Log = storage.Log;
+                LanAdminWindow opened = lanAdmin;
+                opened.Window.Closed += delegate { if (lanAdmin == opened) lanAdmin = null; };
+            }
+            lanAdmin.Show();
         }
         private void DisplayChanged(object sender, EventArgs e)
         {
             Dispatch(delegate
             {
+                if (mini != null) { mini.EnsureVisible(); Save(); }
                 if (ui == null || !ui.IsReady) return;
-                if (state.DesktopMode && !forceWindowed && !ui.Desktop.IsAttached) { Rebuild(); return; }
-                ui.PlaceOnScreen(false); ui.RememberGeometry(); Save();
+                UpdateSecondaryAvailability();
+                if (state.DesktopMode && !forceWindowed && !ui.Desktop.IsAttached) { Rebuild(); ui.RememberGeometry(); Save(); ui.RefreshSettingsForTray(); return; }
+                ui.PlaceOnScreen(false); ui.RememberGeometry(); Save(); ui.RefreshSettingsForTray();
             });
+        }
+        private bool UpdateSecondaryAvailability()
+        {
+            Native.MonitorArea selected = SecondaryStartup.Current(state.SecondaryDeviceName);
+            bool nowAvailable = selected != null;
+            bool selectedReturned = nowAvailable && !String.IsNullOrEmpty(state.SecondaryDeviceName) &&
+                String.Equals(selected.DeviceName, state.SecondaryDeviceName, StringComparison.OrdinalIgnoreCase) &&
+                !String.Equals(previousSelectedSecondaryName, selected.DeviceName, StringComparison.OrdinalIgnoreCase);
+            bool restore = state.StartOnSecondaryOnly && nowAvailable && (!secondaryWasAvailable || selectedReturned);
+            if (restore) SecondaryStartup.Restore(state, selected);
+            secondaryWasAvailable = nowAvailable;
+            previousSelectedSecondaryName = nowAvailable ? selected.DeviceName : null;
+            return restore;
         }
         private static System.Drawing.Icon CreateTrayIcon()
         {
@@ -387,10 +741,16 @@ namespace DesktopTodo
         {
             if (disposed) return;
             disposed = true;
+            Interlocked.Increment(ref settingsSaveGeneration);
+            if (settingsSaveTimer != null) { settingsSaveTimer.Stop(); settingsSaveTimer = null; }
             TrayMenu closingMenu = trayMenu; trayMenu = null;
             if (closingMenu != null) closingMenu.Close();
             if (timer != null) { timer.Stop(); timer = null; }
+            if (hotkeys != null) { hotkeys.Dispose(); hotkeys = null; }
             if (reminder != null) { ReminderPopup closing = reminder; reminder = null; closing.Dispose(); }
+            if (mini != null) { MiniBubble closingMini = mini; mini = null; closingMini.Dispose(); }
+            if (lanAdmin != null) { LanAdminWindow closingAdmin = lanAdmin; lanAdmin = null; closingAdmin.Dispose(); }
+            if (lanService != null) { LanService closingLan = lanService; lanService = null; closingLan.Dispose(); }
             if (tray != null) { tray.Visible = false; tray.Icon.Dispose(); tray.Dispose(); tray = null; }
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= DisplayChanged;
         }

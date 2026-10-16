@@ -15,20 +15,17 @@ namespace DesktopTodo
         private const string ClassName = "DesktopTodo.PhysicalGesturePreview";
         private static readonly WindowProc procedure = PreviewProcedure;
         private static bool registered;
-        private Bitmap source;
+        private readonly BitmapSource source;
         private IntPtr dc, surface, oldSurface;
         private int surfaceWidth, surfaceHeight;
         internal IntPtr Handle { get; private set; }
         internal Native.Rect LastRect { get; private set; }
 
-        internal GesturePreview(BitmapSource bitmap, Native.Rect rect)
+        internal GesturePreview(BitmapSource bitmap, Native.Rect rect, bool showImmediately = true)
         {
             try
             {
-                source = new Bitmap(bitmap.PixelWidth, bitmap.PixelHeight, PixelFormat.Format32bppPArgb);
-                BitmapData data = source.LockBits(new Rectangle(0, 0, source.Width, source.Height), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
-                try { bitmap.CopyPixels(System.Windows.Int32Rect.Empty, data.Scan0, data.Stride * data.Height, data.Stride); }
-                finally { source.UnlockBits(data); }
+                source = bitmap;
                 using (new Native.PhysicalDpiScope())
                 {
                     RegisterPreviewClass();
@@ -39,14 +36,17 @@ namespace DesktopTodo
                     dc = CreateCompatibleDC(IntPtr.Zero);
                     if (dc == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
                     Update(rect);
-                    // The bitmap is fully populated before the HWND is made visible.
-                    Native.SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, 1 | 2 | Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
-                    // Do not make the live WPF card transparent until the compositor has
-                    // actually presented this replacement surface.
-                    FlushComposition();
+                    if (showImmediately) Show();
                 }
             }
             catch { Dispose(); throw; }
+        }
+
+        internal void Show()
+        {
+            using (new Native.PhysicalDpiScope())
+                if (!Native.SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, 1 | 2 | Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
         }
 
         internal void Update(Native.Rect rect)
@@ -72,14 +72,29 @@ namespace DesktopTodo
                     if (surface == IntPtr.Zero) oldSurface = previous;
                     else DeleteObject(surface);
                     surface = nextSurface; surfaceWidth = width; surfaceHeight = height;
-                    using (Bitmap target = new Bitmap(width, height, width * 4, PixelFormat.Format32bppPArgb, pixels))
-                    using (Graphics graphics = Graphics.FromImage(target))
+                    if (width == source.PixelWidth && height == source.PixelHeight)
                     {
-                        graphics.CompositingMode = CompositingMode.SourceCopy;
-                        graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
-                        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                        graphics.Clear(Color.Transparent);
-                        graphics.DrawImage(source, new Rectangle(0, 0, width, height), 0, 0, source.Width, source.Height, GraphicsUnit.Pixel);
+                        // Exact-size moves preserve glyph pixels and need one copy,
+                        // not a second bitmap allocation and bilinear resampling.
+                        source.CopyPixels(System.Windows.Int32Rect.Empty, pixels, width * height * 4, width * 4);
+                    }
+                    else
+                    {
+                        using (Bitmap original = new Bitmap(source.PixelWidth, source.PixelHeight, PixelFormat.Format32bppPArgb))
+                        {
+                            BitmapData data = original.LockBits(new Rectangle(0, 0, original.Width, original.Height), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+                            try { source.CopyPixels(System.Windows.Int32Rect.Empty, data.Scan0, data.Stride * data.Height, data.Stride); }
+                            finally { original.UnlockBits(data); }
+                            using (Bitmap target = new Bitmap(width, height, width * 4, PixelFormat.Format32bppPArgb, pixels))
+                            using (Graphics graphics = Graphics.FromImage(target))
+                            {
+                                graphics.CompositingMode = CompositingMode.SourceCopy;
+                                graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                                graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                                graphics.Clear(Color.Transparent);
+                                graphics.DrawImage(original, new Rectangle(0, 0, width, height), 0, 0, original.Width, original.Height, GraphicsUnit.Pixel);
+                            }
+                        }
                     }
                     Native.Point destination = new Native.Point { X = rect.Left, Y = rect.Top }, origin = new Native.Point();
                     PixelSize size = new PixelSize { Width = width, Height = height };
@@ -120,7 +135,6 @@ namespace DesktopTodo
             if (dc != IntPtr.Zero && oldSurface != IntPtr.Zero) SelectObject(dc, oldSurface);
             if (surface != IntPtr.Zero) { DeleteObject(surface); surface = IntPtr.Zero; }
             if (dc != IntPtr.Zero) { DeleteDC(dc); dc = IntPtr.Zero; }
-            if (source != null) { source.Dispose(); source = null; }
         }
 
         private delegate IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
