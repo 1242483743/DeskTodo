@@ -28,6 +28,7 @@ namespace DesktopTodo
                     return 0;
                 }
                 if (Array.IndexOf(args, "--self-test") >= 0) return Tests.Run(Value(args, "--output-dir") ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "qa"));
+                if (Array.IndexOf(args, "--update-check-test") >= 0) return Tests.CheckLiveUpdate48(Value(args, "--output-dir") ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "qa"));
                 if (Array.IndexOf(args, "--inspect") >= 0)
                 {
                     Directory.CreateDirectory(dataDirectory);
@@ -124,6 +125,7 @@ namespace DesktopTodo
         private GlobalHotkeys hotkeys;
         private bool exiting, hidden, rebuilding, dirty, disposed;
         private bool secondaryWasAvailable;
+        private bool displayChangePending;
         private string previousSelectedSecondaryName;
         private DateTime lastSaveAttempt;
         private IntPtr lastHost;
@@ -131,7 +133,12 @@ namespace DesktopTodo
         private int settingsSaveGeneration;
         private DispatcherTimer settingsSaveTimer;
         private bool settingsPending;
+        private int enqueuedSaveGeneration = -1;
+        private int directSaveBarrier;
+        private int persistedSaveGeneration = -1;
+        private DateTime saveBatchStartedAt;
         internal Action<byte[]> SettingsSnapshotWriterForTest;
+        internal Action<AppState> BackgroundSnapshotObserverForTest;
         internal TodoWindow CurrentUi { get { return ui; } }
         public Controller(Application app, Storage storage, AppState state, bool forceWindowed)
         { this.app = app; this.storage = storage; this.state = state; this.forceWindowed = forceWindowed; }
@@ -180,7 +187,7 @@ namespace DesktopTodo
             ui.Desktop.Log = storage.Log;
             using (System.Drawing.Icon icon = CreateTrayIcon())
                 ui.Window.Icon = Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty, System.Windows.Media.Imaging.BitmapSizeOptions.FromEmptyOptions());
-            ui.Changed = Save; ui.SettingsChanged = QueueSettingsSave; ui.ExitRequested = Exit; ui.HideRequested = Hide;
+            ui.Changed = QueueDataSave; ui.SettingsChanged = QueueSettingsSave; ui.ExitRequested = Exit; ui.HideRequested = Hide;
             ui.SecondaryPreferenceChanged = delegate
             {
                 Native.MonitorArea current = SecondaryStartup.Current(state.SecondaryDeviceName);
@@ -192,6 +199,12 @@ namespace DesktopTodo
             ui.RebuildRequested = delegate { Dispatch(Rebuild); };
             ui.SetStartup = delegate(bool enabled) { Startup.SetEnabled(enabled); };
             ui.ExportRequested = Export; ui.ImportRequested = Import;
+            ui.HistoryRequested = delegate
+            {
+                try { ui.ShowBackupHistory(storage.HistoryFiles(), ImportFromPath, storage.HistoryWarning); }
+                catch (Exception e) { ui.ShowNotice("无法读取历史备份", "请检查备份目录权限：\n" + e.Message); }
+            };
+            ui.PurgeDeletedRequested = PurgeDeleted;
             ui.LanAdminRequested = OpenLanAdmin;
             ui.ConfigureShortcutsRequested = delegate(string showKey, string miniKey) { return hotkeys == null ? null : hotkeys.Configure(showKey, miniKey); };
             ui.Window.SourceInitialized += delegate
@@ -255,6 +268,10 @@ namespace DesktopTodo
                 string exitRequest = Path.Combine(storage.DirectoryPath, "exit.request");
                 if (File.Exists(exitRequest)) { File.Delete(exitRequest); Exit(); return; }
                 if (!Native.IsWindow(ui.Desktop.Handle)) { Rebuild(); return; }
+                // Leave geometry maintenance until release, not in the middle of
+                // an active capture. Pending display changes are retried below.
+                if (ui.GeometryGestureActive) return;
+                if (displayChangePending) { displayChangePending = false; ApplyDisplayChange(); }
                 if (state.DesktopMode && !forceWindowed)
                 {
                     IntPtr current = Native.FindDesktopSurface();
@@ -276,7 +293,7 @@ namespace DesktopTodo
                 }
                 // A slow in-flight settings write must never turn the maintenance
                 // timer into a UI-thread wait on the file gate.
-                if (dirty && !settingsPending && DateTime.UtcNow - lastSaveAttempt > TimeSpan.FromSeconds(10)) Save();
+                if (dirty && !settingsPending && DateTime.UtcNow - lastSaveAttempt > TimeSpan.FromSeconds(10)) QueueSettingsSave();
                 CheckReminder();
                 ui.RefreshStatus();
             }
@@ -285,7 +302,8 @@ namespace DesktopTodo
         private void Save()
         {
             if (settingsSaveTimer != null) settingsSaveTimer.Stop();
-            Interlocked.Increment(ref settingsSaveGeneration);
+            int directGeneration = Interlocked.Increment(ref settingsSaveGeneration);
+            Volatile.Write(ref directSaveBarrier, directGeneration);
             settingsPending = false; ui.IsSavePending = false;
             ApplyTrayVisibility();
             dirty = true; lastSaveAttempt = DateTime.UtcNow;
@@ -293,11 +311,18 @@ namespace DesktopTodo
             long previousRevision = state.DataRevision;
             state.LastSavedAt = DateTime.UtcNow.Ticks;
             state.DataRevision++;
-            try { lock (saveGate) storage.Save(state); dirty = false; ui.IsSaved = true; ui.SaveError = null; SyncLanService(); }
+            try { lock (saveGate) { storage.Save(state); persistedSaveGeneration = directGeneration; } dirty = false; ui.IsSaved = true; ui.SaveError = null; SyncLanService(); }
             catch (Exception e) { state.LastSavedAt = previousSavedAt; state.DataRevision = previousRevision; ui.IsSaved = false; ui.SaveError = e.Message; storage.Log("Save failed: " + e.Message); }
             ui.RefreshStatus();
         }
-        private void QueueSettingsSave()
+        private void QueueDataSave()
+        {
+            QueueSave(100);
+            // Revoking sharing takes effect immediately, not after disk I/O.
+            SyncLanService();
+        }
+        private void QueueSettingsSave() { QueueSave(250); }
+        private void QueueSave(int debounceMilliseconds)
         {
             if (exiting || disposed) return;
             Interlocked.Increment(ref settingsSaveGeneration);
@@ -306,26 +331,28 @@ namespace DesktopTodo
             ui.IsSaved = false; ui.IsSavePending = true; ui.SaveError = null; ui.RefreshStatus();
             if (settingsSaveTimer == null)
             {
-                settingsSaveTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(250) };
+                settingsSaveTimer = new DispatcherTimer(DispatcherPriority.Background);
                 settingsSaveTimer.Tick += delegate { BeginSettingsSave(); };
             }
-            settingsSaveTimer.Stop(); settingsSaveTimer.Start();
+            if (!settingsSaveTimer.IsEnabled) saveBatchStartedAt = DateTime.UtcNow;
+            double remaining = 1000 - (DateTime.UtcNow - saveBatchStartedAt).TotalMilliseconds;
+            settingsSaveTimer.Stop(); settingsSaveTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, Math.Min(debounceMilliseconds, remaining))); settingsSaveTimer.Start();
         }
         internal void BeginSettingsSave()
         {
             if (settingsSaveTimer != null) settingsSaveTimer.Stop();
             if (exiting || disposed || !settingsPending) return;
             int generation = settingsSaveGeneration;
-            long savedAt = DateTime.UtcNow.Ticks, previousSavedAt = state.LastSavedAt;
-            byte[] snapshot;
+            if (generation == enqueuedSaveGeneration) return;
+            enqueuedSaveGeneration = generation;
+            long savedAt = DateTime.UtcNow.Ticks;
+            AppState draft;
             lastSaveAttempt = DateTime.UtcNow;
             try
             {
-                // Copy on the UI thread; the worker never traverses mutable tasks
-                // or controls. Its byte snapshot is independent of later edits.
-                state.LastSavedAt = savedAt;
-                try { snapshot = Storage.Serialize(state); }
-                finally { state.LastSavedAt = previousSavedAt; }
+                // Only copy objects here. JSON serialization, validation, backup
+                // rotation, flushing and atomic replacement all run on the worker.
+                draft = state.CopyForSave(savedAt);
             }
             catch (Exception e) { FinishSettingsSave(generation, savedAt, e); return; }
             ThreadPool.QueueUserWorkItem(delegate
@@ -333,13 +360,19 @@ namespace DesktopTodo
                 Exception error = null;
                 try
                 {
+                    if (generation < Volatile.Read(ref directSaveBarrier)) return;
+                    if (BackgroundSnapshotObserverForTest != null) BackgroundSnapshotObserverForTest(draft);
+                    byte[] snapshot = Storage.Serialize(draft);
                     lock (saveGate)
                     {
-                        // A direct save/exit or newer change invalidates queued old
-                        // snapshots. Serialize writes so an old file cannot win.
-                        if (generation != Volatile.Read(ref settingsSaveGeneration)) return;
+                        // New edits may keep arriving: retain periodic checkpoints
+                        // rather than starving saves until typing stops. An older
+                        // checkpoint can NEVER overwrite a newer committed snapshot
+                        // or cross a synchronous import/hide/exit save barrier.
+                        if (generation < Volatile.Read(ref directSaveBarrier) || generation <= persistedSaveGeneration) return;
                         if (SettingsSnapshotWriterForTest != null) SettingsSnapshotWriterForTest(snapshot);
                         else storage.SaveSnapshot(snapshot);
+                        persistedSaveGeneration = generation;
                     }
                 }
                 catch (Exception e) { error = e; }
@@ -356,7 +389,7 @@ namespace DesktopTodo
             if (disposed || exiting || generation != settingsSaveGeneration) return;
             settingsPending = false; ui.IsSavePending = false;
             if (error == null) { state.LastSavedAt = savedAt; dirty = false; ui.IsSaved = true; ui.SaveError = null; }
-            else { dirty = true; ui.IsSaved = false; ui.SaveError = error.Message; storage.Log("Settings save failed: " + error.Message); }
+            else { dirty = true; ui.IsSaved = false; ui.SaveError = error.Message; storage.Log("Background save failed: " + error.Message); }
             ui.RefreshStatus();
         }
         private void CheckReminder()
@@ -482,30 +515,70 @@ namespace DesktopTodo
                 if (String.Equals(Path.GetFullPath(dialog.FileName), storage.DataPath, StringComparison.OrdinalIgnoreCase) || String.Equals(Path.GetFullPath(dialog.FileName), storage.DataPath + ".bak", StringComparison.OrdinalIgnoreCase))
                 { ui.ShowNotice("无法导出", "请选择其他路径，以免覆盖当前正在使用的数据文件。"); return; }
                 storage.Export(state, dialog.FileName);
-                ui.ShowNotice("备份已导出", "备份文件已保存到：\n" + dialog.FileName);
+                ui.ShowToast(ui.State.Language == "en-US" ? "Backup exported: " + Path.GetFileName(dialog.FileName) : "备份已导出：" + Path.GetFileName(dialog.FileName));
             }
         }
         private void Import()
         {
             Microsoft.Win32.OpenFileDialog dialog = new Microsoft.Win32.OpenFileDialog { Title = "导入待办备份", Filter = "待办备份 (*.json)|*.json|所有文件 (*.*)|*.*", CheckFileExists = true };
             if (dialog.ShowDialog() != true) return;
+            ImportFromPath(dialog.FileName);
+        }
+        private void ImportFromPath(string path)
+        {
             AppState imported;
-            try { imported = Storage.Read(dialog.FileName); }
+            try { imported = Storage.Read(path); }
             catch (Exception e) { ui.ShowNotice("无法导入", "所选文件不是有效的待办备份：\n" + e.Message); return; }
             int pending = imported.Pending.Count(), completed = imported.Completed.Count();
             ui.ShowConfirmation("导入备份", "备份中有 " + pending + " 条未完成、" + completed + " 条已完成事项。\n\n导入会替换当前清单；软件会先自动保留一份导入前备份。", "导入", delegate
             {
+                AppState previous = state.CopyForSave(state.LastSavedAt);
+                // Restore the original object identities on failure so undo/edit
+                // references still point at the pre-import tasks and groups.
+                previous.Items = state.Items; previous.Groups = state.Groups; previous.CollapsedGroupIds = state.CollapsedGroupIds;
+                bool applied = false;
                 try
                 {
                     if (reminder != null) { ReminderPopup closing = reminder; reminder = null; closing.Dispose(); }
                     string safety = Path.Combine(storage.DirectoryPath, "before-import-" + DateTime.Now.ToString("yyyyMMdd-HHmmssfff") + ".json");
                     storage.Export(state, safety);
                     ApplyImportedState(state, imported);
-                    ui.ClearUndoHistory(); ui.RefreshImportedState(); ui.NotifyChanged();
-                    ui.ShowNotice("导入完成", "已恢复 " + (pending + completed) + " 条事项。导入前数据已自动备份到：\n" + safety);
+                    applied = true; Save();
+                    if (dirty) throw new IOException(ui.SaveError ?? "更改未能保存。");
+                    ui.ClearUndoHistory(); ui.RefreshImportedState();
+                    ui.ShowToast(state.Language == "en-US" ? "Restored " + (pending + completed) + " tasks; previous list backed up." :
+                        "已恢复 " + (pending + completed) + " 条事项，原清单已备份");
                 }
-                catch (Exception e) { ui.ShowNotice("导入未完成", "当前清单没有被替换：\n" + e.Message); }
+                catch (Exception e)
+                {
+                    if (applied) { ApplyImportedState(state, previous); QueueDataSave(); ui.RefreshImportedState(); }
+                    ui.ShowNotice("导入未完成", "已保留或恢复导入前清单：\n" + e.Message);
+                }
             });
+        }
+        private void PurgeDeleted(string[] ids)
+        {
+            var selected = new System.Collections.Generic.HashSet<string>(ids);
+            var previous = state.Items;
+            int count = previous.Count(item => item.Deleted && selected.Contains(item.Id));
+            if (count == 0) { ui.OpenRecentlyDeleted(); return; }
+            bool applied = false;
+            try
+            {
+                string safety = Path.Combine(storage.DirectoryPath, "before-purge-" + DateTime.Now.ToString("yyyyMMdd-HHmmssfff") + "-" + Guid.NewGuid().ToString("N") + ".json");
+                Directory.CreateDirectory(storage.DirectoryPath);
+                storage.Export(state, safety); Storage.Read(safety);
+                state.Items = previous.Where(item => !item.Deleted || !selected.Contains(item.Id)).ToList();
+                applied = true; Save();
+                if (dirty) throw new IOException(ui.SaveError ?? "更改未能保存。");
+                ui.ClearUndoHistory(); ui.RefreshSettingsForTray(); ui.OpenRecentlyDeleted();
+                ui.ShowToast(state.Language == "en-US" ? "Cleared " + count + " records; full backup saved locally." : "已清理 " + count + " 条记录，完整备份已保存在本机");
+            }
+            catch (Exception error)
+            {
+                if (applied) { state.Items = previous; QueueDataSave(); ui.Refresh(); }
+                ui.ShowNotice("清理未完成", "已保留或恢复清理前记录：\n" + error.Message);
+            }
         }
         internal static void ApplyImportedState(AppState target, AppState imported)
         {
@@ -546,7 +619,7 @@ namespace DesktopTodo
             catch (Exception e)
             {
                 state.LanSharingEnabled = false;
-                try { storage.Save(state); } catch { }
+                Save(); // Revoke the failed enable through the same save barrier.
                 storage.Log("LAN management could not start: " + e.Message);
                 if (ui != null) { ui.RefreshSettingsForTray(); ui.ShowNotice("局域网管理未能开启", "请确认端口没有被其他程序占用，并在 Windows 防火墙中允许 DeskTodo 使用专用网络。\n\n" + e.Message); }
             }
@@ -611,6 +684,7 @@ namespace DesktopTodo
                         if (state.DisableGroups) throw new InvalidOperationException("对方已关闭分组。");
                         if (!ui.CanMoveGroup(request.ItemId, request.TargetId)) throw new InvalidOperationException("只能在相同置顶状态的分组之间调整顺序。");
                         ui.MoveGroup(request.ItemId, request.TargetId, request.After);
+                        Save(); if (dirty) throw new IOException("更改暂未保存，请稍后刷新核对并重试。");
                         response = new LanResponse { Success = true, Snapshot = CreateLanSnapshot() }; return;
                     }
                     if (operation == "add")
@@ -666,6 +740,7 @@ namespace DesktopTodo
                         }
                         else throw new InvalidOperationException("不支持的操作。");
                     }
+                    Save(); if (dirty) throw new IOException("更改暂未保存，请稍后刷新核对并重试。");
                     response = new LanResponse { Success = true, Snapshot = CreateLanSnapshot() };
                 }
                 catch (Exception e) { response = LanResponse.Fail(e.Message); }
@@ -688,12 +763,17 @@ namespace DesktopTodo
         {
             Dispatch(delegate
             {
-                if (mini != null) { mini.EnsureVisible(); Save(); }
-                if (ui == null || !ui.IsReady) return;
-                UpdateSecondaryAvailability();
-                if (state.DesktopMode && !forceWindowed && !ui.Desktop.IsAttached) { Rebuild(); ui.RememberGeometry(); Save(); ui.RefreshSettingsForTray(); return; }
-                ui.PlaceOnScreen(false); ui.RememberGeometry(); Save(); ui.RefreshSettingsForTray();
+                if (ui != null && ui.GeometryGestureActive) { displayChangePending = true; return; }
+                ApplyDisplayChange();
             });
+        }
+        private void ApplyDisplayChange()
+        {
+            if (mini != null) { mini.EnsureVisible(); Save(); }
+            if (ui == null || !ui.IsReady) return;
+            UpdateSecondaryAvailability();
+            if (state.DesktopMode && !forceWindowed && !ui.Desktop.IsAttached) { Rebuild(); ui.RememberGeometry(); Save(); ui.RefreshSettingsForTray(); return; }
+            ui.PlaceOnScreen(false); ui.RememberGeometry(); Save(); ui.RefreshSettingsForTray();
         }
         private bool UpdateSecondaryAvailability()
         {
@@ -741,7 +821,7 @@ namespace DesktopTodo
         {
             if (disposed) return;
             disposed = true;
-            Interlocked.Increment(ref settingsSaveGeneration);
+            Volatile.Write(ref directSaveBarrier, Interlocked.Increment(ref settingsSaveGeneration));
             if (settingsSaveTimer != null) { settingsSaveTimer.Stop(); settingsSaveTimer = null; }
             TrayMenu closingMenu = trayMenu; trayMenu = null;
             if (closingMenu != null) closingMenu.Close();

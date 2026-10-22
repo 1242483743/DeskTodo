@@ -491,7 +491,7 @@ namespace DesktopTodo
                 {
                     FrameworkElement element = pair.Key;
                     double displacement = pair.Value - VisualTreeHelper.GetOffset(element).Y - element.RenderTransform.Value.OffsetY;
-                    if (Math.Abs(displacement) < .1) continue;
+                    if (Math.Abs(displacement) < .1 || !SystemParameters.ClientAreaAnimation) continue;
                     Transform original; if (!originals.TryGetValue(element, out original)) { original = element.RenderTransform; originals[element] = original; }
                     TranslateTransform offset = new TranslateTransform(0, displacement); offsets[element] = offset;
                     element.RenderTransform = new TransformGroup { Children = { original, offset } };
@@ -630,7 +630,7 @@ namespace DesktopTodo
             offset.BeginAnimation(TranslateTransform.XProperty, null); offset.X = 0;
             label.Measure(new Size(Double.PositiveInfinity, Double.PositiveInfinity));
             double overflow = label.DesiredSize.Width - ActualWidth;
-            if (!IsLoaded || ActualWidth <= 0 || overflow <= 1) return;
+            if (!IsLoaded || ActualWidth <= 0 || overflow <= 1 || !SystemParameters.ClientAreaAnimation) return;
             double travel = Math.Max(1.2, overflow / 26);
             DoubleAnimationUsingKeyFrames motion = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
             motion.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));

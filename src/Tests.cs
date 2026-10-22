@@ -15,7 +15,7 @@ using System.Runtime.InteropServices;
 
 namespace DesktopTodo
 {
-    internal static class Tests
+    internal static partial class Tests
     {
         private static int passed;
         private static readonly StringBuilder report = new StringBuilder();
@@ -29,6 +29,10 @@ namespace DesktopTodo
             try
             {
                 Application app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+                CheckLanRouting50();
+                CheckImprovements49(app, fixture, directory);
+                CheckFixes48(app, fixture, directory);
+                CheckProductivity47(fixture, directory);
                 CheckSettingsResponsiveness46(app, fixture, directory);
                 CheckMixedDpi45(directory);
                 CheckWindowMove44(directory);
@@ -559,8 +563,8 @@ namespace DesktopTodo
                 Check(view.SettingsOpen && view.Control<FrameworkElement>("MainPanel").Visibility == Visibility.Collapsed, "设置在卡片内打开，不使用系统菜单");
                 Pump(); System.Threading.Thread.Sleep(230); Pump();
                 Check(!view.CategoryDialogOpen && view.Control<ScrollViewer>("SettingsScroll").Content is StackPanel &&
-                    ((StackPanel)view.Control<ScrollViewer>("SettingsScroll").Content).Children.Count == 5,
-                    "设置首页仅显示五个大分类入口，不直接堆叠所有开关");
+                    ((StackPanel)view.Control<ScrollViewer>("SettingsScroll").Content).Children.Count == 4,
+                    "设置首页合并为四个分类入口，外观与主题不再分散");
                 Render(view, Path.Combine(directory, "settings-overview.png"));
                 foreach (string category in new[] { "BasicSectionLabel", "CustomSectionLabel", "ThemeLabel", "LanSectionLabel", "ManagementLabel" })
                 {
@@ -571,14 +575,19 @@ namespace DesktopTodo
                     Render(view, Path.Combine(directory, "settings-category-" + category + "-bottom.png"));
                 }
                 view.OpenSettingsCategory("BasicSectionLabel");
+                view.ExpandAdvancedSettings();
                 view.Window.Width = 320; view.Window.Height = 360; Pump();
                 foreach (string category in new[] { "CustomSectionLabel", "LanSectionLabel", "ManagementLabel" })
                 {
                     view.OpenSettingsCategory(category); view.Window.UpdateLayout();
                     if (category == "ManagementLabel")
+                    {
+                        view.OpenSettingsCategory("BasicSectionLabel"); view.ExpandAdvancedSettings(); view.Window.UpdateLayout();
                         Check(view.Control<Button>("ResetButton").ActualWidth >= 160 &&
                             view.Control<Button>("PositionMenuButton").ActualWidth >= 33,
                             "最窄卡片的默认位置大小文字和三点入口都保留足够空间");
+                        view.OpenSettingsCategory(category); view.Window.UpdateLayout();
+                    }
                     Render(view, Path.Combine(directory, "settings-min-" + category + ".png"));
                     view.SettingsCategoryScroll.ScrollToEnd(); view.Window.UpdateLayout();
                     Render(view, Path.Combine(directory, "settings-min-" + category + "-bottom.png"));
@@ -590,8 +599,8 @@ namespace DesktopTodo
                     "基础功能在卡片内弹框显示并可滚动");
                 Render(view, Path.Combine(directory, "settings-category-basics.png"));
                 view.OpenSettingsCategory("CustomSectionLabel");
-                Check(((StackPanel)view.SettingsCategoryScroll.Content).Children.Contains(view.Control<CheckBox>("ShowTimesToggle")),
-                    "分类弹框切换时不丢失选项与已设置值");
+                Check(((StackPanel)view.SettingsCategoryScroll.Content).Children.Contains(view.Control<ComboBox>("TimeDisplaySelect")),
+                    "外观分类切换后保留合并的时间选项及已设置值");
                 view.SettingsCategoryBackdrop.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
                     { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
                 Check(!view.CategoryDialogOpen && view.SettingsOpen, "点击设置弹框外部只关闭弹框，仍留在设置首页");
@@ -606,7 +615,8 @@ namespace DesktopTodo
                 view.Control<CheckBox>("StartupToggle").IsChecked = true;
                 view.Control<CheckBox>("StartupToggle").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 Check(fakeStartup, "设置自启开关事件（模拟，不修改注册表）");
-                Check(view.Control<TextBlock>("SettingsVersion").Text == "v1.46", "设置页最下方显示当前版本号：" + view.Control<TextBlock>("SettingsVersion").Text);
+                Version releaseVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                Check(view.Control<TextBlock>("SettingsVersion").Text == "v" + releaseVersion.Major + "." + releaseVersion.Minor, "设置页最下方显示当前版本号：" + view.Control<TextBlock>("SettingsVersion").Text);
                 view.SettingsMessage("设置已保存");
                 Check(view.Control<TextBlock>("SettingsStatus").Text.EndsWith("10s"), "设置页临时提示从 10 秒开始倒计时");
                 view.AdvanceSettingsMessageForTest(11);
@@ -677,8 +687,8 @@ namespace DesktopTodo
                 reentrantMenu.Close(); reentrantMenu.Close(); Pump();
                 Check(!reentrantMenu.Window.IsVisible, "托盘关闭期间再次关闭、关闭后再次关闭都不会抛出 Window 生命周期异常");
                 Check(view.Control<TextBlock>("BasicSectionLabel").Text == "基础功能" &&
-                    view.Control<TextBlock>("CustomSectionLabel").Text == "自定义界面",
-                    "设置分组使用基础功能与自定义界面名称");
+                    view.Control<TextBlock>("CustomSectionLabel").Text == "外观",
+                    "设置分组使用基础功能与合并后的外观名称");
                 view.Control<CheckBox>("ShowMinimizeToggle").IsChecked = true;
                 view.Control<CheckBox>("ShowMinimizeToggle").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 view.Control<CheckBox>("ShowCloseToggle").IsChecked = true;
@@ -934,8 +944,8 @@ namespace DesktopTodo
                 double menuX = menuForButtons.TranslatePoint(new Point(), cardForButtons).X;
                 double minimizeX = minimizeButton.TranslatePoint(new Point(), cardForButtons).X;
                 double closeX = closeButton.TranslatePoint(new Point(), cardForButtons).X;
-                Check(compactX < menuX && menuX < minimizeX && minimizeX < closeX,
-                    "缩成图标、设置、最小化和关闭按顺序贴近右侧排列");
+                Check(compactX < minimizeX && minimizeX < closeX && closeX < menuX,
+                    "可选按钮位于设置左侧，更多按钮始终保持最右侧固定锚点");
                 FrameworkElement minimizeGlyph = view.Control<FrameworkElement>("MinimizeGlyph"), closeGlyphHeader = view.Control<FrameworkElement>("CloseGlyph");
                 Point minimizeCenter = minimizeGlyph.TranslatePoint(new Point(minimizeGlyph.ActualWidth / 2, minimizeGlyph.ActualHeight / 2), minimizeButton);
                 Point closeCenterHeader = closeGlyphHeader.TranslatePoint(new Point(closeGlyphHeader.ActualWidth / 2, closeGlyphHeader.ActualHeight / 2), closeButton);
@@ -1154,7 +1164,7 @@ namespace DesktopTodo
                         return pixel.A > 180 && pixel.R < 200 && pixel.G < 200 && pixel.B < 200; }),
                         "分类弹框遮罩覆盖卡片四角，不露出亮白色弧边");
                 }
-                CheckBox animatedToggle = motionView.Control<CheckBox>("ShowDateToggle");
+                CheckBox animatedToggle = motionView.Control<CheckBox>("DarkToggle");
                 motionView.OpenSettingsCategory("CustomSectionLabel"); Pump();
                 animatedToggle.ApplyTemplate();
                 System.Windows.Shapes.Ellipse animatedKnob = animatedToggle.Template.FindName("Knob", animatedToggle) as System.Windows.Shapes.Ellipse;
@@ -1530,14 +1540,16 @@ namespace DesktopTodo
                 Native.Rect below; Native.PhysicalWindowRect(view.Desktop.Handle, out below);
                 Check(SameRect(original, below) && !view.MovePreviewActive, "窗口按下及未越过拖动阈值时不捕获快照或移动");
                 view.ContinueWindowMove(new Native.Point { X = start.X - 12, Y = start.Y + 9 });
-                Native.Rect moved; Native.PhysicalWindowRect(view.Desktop.Handle, out moved);
-                Check(moved.Left == original.Left - 12 && moved.Top == original.Top + 9 && !view.MovePreviewActive &&
-                    view.Control<Border>("Card").Opacity == 1 && view.Control<Grid>("CardShadow").Opacity == 1,
-                    "普通窗口第一次拖动立即移动原 HWND，不做快照、代理窗口或透明度切换");
+                Native.Rect moved; Native.PhysicalWindowRect(view.MovePreviewHandle, out moved);
+                Check(moved.Left == original.Left - 12 && moved.Top == original.Top + 9 && view.MovePreviewActive &&
+                    GestureWindowClip.PixelsSuppressed(view.Desktop.Handle),
+                    "普通窗口与桌面模式一致：首次越过阈值建立一份固定画面的原生预览，原 HWND 不反复移动");
+                IntPtr retainedPreview = view.MovePreviewHandle;
                 System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
                 for (int i = 0; i < 100; i++) view.ContinueWindowMove(new Native.Point { X = start.X - 12 - i % 2, Y = start.Y + 9 });
                 report.AppendLine("MEASURE: 普通窗口100次移动更新 " + watch.Elapsed.TotalMilliseconds.ToString("F2") + " ms（不是屏幕FPS）");
-                Check(!view.MovePreviewActive && view.Window.IsVisible, "连续窗口移动不反复创建代理，主体始终可见");
+                Check(view.MovePreviewHandle == retainedPreview && view.MovePreviewSurfaceBuilds == 1 && Native.IsWindowVisible(retainedPreview),
+                    "连续窗口移动复用同一份可见代理，不重复截图或重建像素表面");
                 view.FinishWindowMoveForTest(false); Pump(); Native.PhysicalWindowRect(view.Desktop.Handle, out moved);
                 Check(SameRect(original, moved) && !state.PositionSet, "取消直接移动后恢复原位置，不保存草稿位置");
                 view.BeginWindowMove(start); state.Locked = true;
@@ -1565,7 +1577,16 @@ namespace DesktopTodo
                     attached.Control<Grid>("CardShadow").Opacity == 0, "嵌入桌面仍用独立代理移动，实时卡片与阴影一起隐藏，无双重阴影残留");
                 IntPtr preview = attached.MovePreviewHandle; Native.Rect previewRect; Native.PhysicalWindowRect(preview, out previewRect);
                 Native.Rect sourceRect; Native.PhysicalWindowRect(attached.Desktop.Handle, out sourceRect);
-                Check(previewRect.Left == original.Left - 15 && previewRect.Top == original.Top + 10 && SameRect(sourceRect, original),
+                Native.Point endPoint = new Native.Point { X = start.X - 15, Y = start.Y + 10 };
+                Native.MonitorArea endDisplay = Native.MonitorAt(endPoint);
+                Native.Rect expectedPreview = TodoWindow.DpiMoveGeometry(original, start, endPoint,
+                    Native.MonitorScale(Native.MonitorFor(original).Handle), Native.MonitorScale(endDisplay.Handle),
+                    attached.State.Width, attached.State.Height, endDisplay.Work, false);
+                report.AppendLine("MEASURE: 嵌入拖动 origin=" + original.Left + "," + original.Top + "," + (original.Right-original.Left) + "," + (original.Bottom-original.Top) +
+                    " preview=" + previewRect.Left + "," + previewRect.Top + "," + (previewRect.Right-previewRect.Left) + "," + (previewRect.Bottom-previewRect.Top) +
+                    " expected=" + expectedPreview.Left + "," + expectedPreview.Top + "," + (expectedPreview.Right-expectedPreview.Left) + "," + (expectedPreview.Bottom-expectedPreview.Top) +
+                    " source=" + sourceRect.Left + "," + sourceRect.Top + "," + (sourceRect.Right-sourceRect.Left) + "," + (sourceRect.Bottom-sourceRect.Top));
+                Check(SameRect(previewRect, expectedPreview) && SameRect(sourceRect, original),
                     "嵌入桌面移动只更新顶层代理，不重绘 Explorer 子窗口");
                 Check(GestureWindowClip.PixelsSuppressed(attached.Desktop.Handle),
                     "原生像素在交接时立即隐藏，不等待 WPF 下一帧，避免半透明卡片与阴影叠闪");
@@ -1603,7 +1624,7 @@ namespace DesktopTodo
                     AdvanceFrames(260);
                     StackPanel overview = (StackPanel)view.Control<ScrollViewer>("SettingsScroll").Content;
                     Button[] entries = overview.Children.OfType<Button>().ToArray();
-                    Check(entries.Length == 5 && entries.All(entry => {
+                    Check(entries.Length == 4 && entries.All(entry => {
                         Grid row = (Grid)entry.Content; TextBlock label = row.Children.OfType<TextBlock>().Single();
                         Rect text = label.TransformToAncestor(entry).TransformBounds(UiGlyphs.TextInk(label));
                         Grid icon = row.Children.OfType<Grid>().Single(); System.Windows.Shapes.Path arrow = icon.Children.OfType<System.Windows.Shapes.Path>().Single();
@@ -1815,7 +1836,7 @@ namespace DesktopTodo
         private static void CheckReviewLayouts(string directory)
         {
             AppState layoutState = new AppState { Language = "zh-CN", DesktopMode = false, Locked = false,
-                ThemeId = "ocean", Width = 480, Height = 600, DisableGroups = false };
+                ThemeId = "ocean", Width = 480, Height = 600, DisableGroups = false, LanSharingEnabled = true };
             TodoGroup work = new TodoGroup { Id = "qa-work", Name = "工作" };
             TodoGroup life = new TodoGroup { Id = "qa-life", Name = "生活" };
             layoutState.Groups.Add(work); layoutState.Groups.Add(life);
@@ -1883,8 +1904,8 @@ namespace DesktopTodo
                 Check(historyView.Control<StackPanel>("CompletedList").Children.Count == 0 && history.Completed.Count() == 1000,
                     "1000 条已完成历史折叠时零隐藏行控件，原数据完整保留");
                 historyView.Control<Expander>("CompletedSection").IsExpanded = true;
-                Check(historyView.Control<StackPanel>("CompletedList").Children.Count == 1000,
-                    "展开已完成时按需创建全部历史行，不删减历史功能");
+                Check(historyView.Control<StackPanel>("CompletedList").Children.OfType<Grid>().Count() == 50 && historyView.Control<Button>("CompletedLoadMore").Parent != null,
+                    "展开已完成首批只创建五十条历史行，后续仍可加载而不删除原数据");
                 historyView.Control<Expander>("CompletedSection").IsExpanded = false;
                 Check(historyView.Control<StackPanel>("CompletedList").Children.Count == 0,
                     "重新折叠已完成释放历史行的视觉引用");
@@ -1966,13 +1987,14 @@ namespace DesktopTodo
                 AppState reopened = testStore.Load();
                 Check(reopened.ShowHotkey == "Ctrl+Alt+K" && reopened.MiniHotkey == "Ctrl+Alt+J" && reopened.Groups.OrderBy(g => g.SortOrder).First().Id == life.Id,
                     "快捷键与分组拖动顺序经实际 JSON 保存、读取后保持");
+                state.LanSharingEnabled = true; view.RefreshImportedState();
                 view.SettingsOpen = true; view.OpenSettingsCategory("LanSectionLabel");
                 Render(view, Path.Combine(directory, "v136-lan-input.png"), 168);
                 TextBox lanName = view.Control<TextBox>("LanDisplayNameInput"); lanName.ApplyTemplate();
                 Border outline = lanName.Template.FindName("InputSurface", lanName) as Border;
                 Check(outline != null && outline.Margin.Bottom >= .5 && outline.BorderThickness.Bottom >= 1.2 && outline.BorderBrush != null,
                     "局域网名称框边线向内留出抗锯齿空间并提高对比，底边不贴裁切边缘");
-                view.OpenSettingsCategory("BasicSectionLabel"); Render(view, Path.Combine(directory, "v136-shortcuts-top.png"));
+                view.OpenSettingsCategory("BasicSectionLabel"); view.ExpandAdvancedSettings(); Render(view, Path.Combine(directory, "v136-shortcuts-top.png"));
                 view.SettingsCategoryScroll.ScrollToEnd(); Render(view, Path.Combine(directory, "v136-shortcuts-bottom.png"));
                 Button shortcutSave = view.Control<Button>("SaveHotkeysButton");
                 Point shortcutPosition = shortcutSave.TranslatePoint(new Point(), view.SettingsCategoryScroll);
@@ -2686,9 +2708,10 @@ namespace DesktopTodo
             try
             {
                 view.Window.Show(); Pump(); view.SettingsOpen = true; view.OpenSettingsCategory("BasicSectionLabel"); Pump();
+                view.ExpandAdvancedSettings(); view.Window.UpdateLayout();
                 Check(!view.State.StartOnSecondaryOnly && view.Control<CheckBox>("SecondaryStartupToggle").IsChecked == false &&
-                    ((StackPanel)view.SettingsCategoryScroll.Content).Children.Contains(view.Control<ComboBox>("SecondaryDisplaySelect")),
-                    "基础功能页提供默认关闭的副屏自启开关和目标副屏选择");
+                    view.Control<ComboBox>("SecondaryDisplaySelect").IsVisible,
+                    "基础功能高级设置提供默认关闭的副屏自启开关和目标副屏选择");
                 view.Control<CheckBox>("SecondaryStartupToggle").IsChecked = true;
                 view.Control<CheckBox>("SecondaryStartupToggle").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 Check(fakeStartup && view.State.StartOnSecondaryOnly,

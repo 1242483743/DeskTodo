@@ -16,7 +16,7 @@ using System.Windows.Threading;
 
 namespace DesktopTodo
 {
-    public sealed class TodoWindow
+    public sealed partial class TodoWindow
     {
         public readonly Window Window;
         public readonly AppState State;
@@ -47,6 +47,9 @@ namespace DesktopTodo
         private Action pendingConfirmation;
         private bool closingEdit, suppressEditLostFocus;
         private bool dragging;
+        private readonly UiFrameQueue windowMoveFrames;
+        internal bool GeometryGestureActive { get { return dragging || resizing; } }
+        internal int WindowMoveFrameUpdates { get { return windowMoveFrames.FrameUpdates; } }
         private Native.Point dragStart;
         private Native.Rect dragRect, dragTarget;
         private IntPtr dragMonitor;
@@ -103,6 +106,8 @@ namespace DesktopTodo
         public TodoWindow(AppState state)
         {
             State = state;
+            windowMoveFrames = new UiFrameQueue(delegate(Point point)
+            { ContinueWindowMove(new Native.Point { X = (int)point.X, Y = (int)point.Y }, true); });
             using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("DesktopTodo.MainWindow.xaml"))
             using (StreamReader reader = new StreamReader(stream))
                 Window = (Window)XamlReader.Parse(reader.ReadToEnd().Replace("assembly=DeskTodo", "assembly=" + Assembly.GetExecutingAssembly().GetName().Name));
@@ -177,8 +182,11 @@ namespace DesktopTodo
             Control<Button>("UndoButton").Click += delegate { Undo(); };
             Control<Button>("ClearCompletedButton").Click += delegate
             {
-                int count = State.Completed.Count();
-                if (count > 0) ShowConfirmation("清空已完成", "将清空 " + count + " 条已完成事项。清空后可以在主页点击“撤销”恢复整批事项。", "清空", ClearCompleted);
+                int count = VisibleCompleted().Count();
+                if (count > 0) ShowConfirmation(L("清空已完成", "Clear completed"),
+                    L("将移除当前范围内的 " + count + " 条已完成事项", "Remove all " + count + " completed tasks in the current scope") +
+                    (count > completedVisibleLimit ? L("（包括尚未加载的记录）", " (including unloaded records)") : "") +
+                    L("。可点击“撤销”，或在“最近删除”中恢复。", ". Undo or restore from Recently deleted."), L("清空", "Clear"), ClearCompleted);
             };
             Control<Button>("LockButton").Click += delegate { State.Locked = !State.Locked; NotifyChanged(); RefreshStatus(); };
             Control<Button>("CompactButton").Click += delegate { if (MiniRequested != null) MiniRequested(); };
@@ -357,16 +365,20 @@ namespace DesktopTodo
             dragSurface.MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e)
             {
                 if (State.Locked || IsButtonSource(e.OriginalSource as DependencyObject) || !IsReady) return;
-                Point addTop = addBar.TranslatePoint(new Point(0, 0), dragSurface);
+                FrameworkElement inputBar = SearchOpen ? Control<FrameworkElement>("SearchBar") : addBar;
+                Point addTop = inputBar.TranslatePoint(new Point(0, 0), dragSurface);
                 if (!IsTopDragPoint(e.GetPosition(dragSurface).Y, addTop.Y)) return;
                 Native.Point cursor; Native.GetPhysicalCursorPos(out cursor);
                 BeginWindowMove(cursor); dragSurface.CaptureMouse();
                 e.Handled = true;
             };
-            dragSurface.MouseMove += delegate
+            dragSurface.MouseMove += delegate(object sender, MouseEventArgs e)
             {
+                // Ignore hover/synthetic capture messages and queued motion after
+                // button release; only a held-left-button gesture moves a window.
+                if (!dragging || e.LeftButton != MouseButtonState.Pressed) return;
                 Native.Point current; Native.GetPhysicalCursorPos(out current);
-                ContinueWindowMove(current, true);
+                QueueWindowMove(current);
             };
             dragSurface.MouseLeftButtonUp += delegate
             {
@@ -385,9 +397,10 @@ namespace DesktopTodo
             Control<Grid>("CardContent").SizeChanged += delegate { UpdateCardClip(); };
             Control<Border>("ProgressTrack").SizeChanged += delegate { UpdateProgress(); };
             Control<Grid>("TaskArea").SizeChanged += delegate { SizeCompletedArea(); };
+            Control<ScrollViewer>("PendingScroll").SizeChanged += delegate { UpdateEmptyPlaceholder(); };
             Control<Expander>("CompletedSection").Expanded += delegate { SizeCompletedArea(); RefreshCompletedRows(); };
-            Control<Expander>("CompletedSection").Collapsed += delegate { Control<StackPanel>("CompletedList").Children.Clear(); PruneRowCache(); };
-            Window.Closed += delegate { if (editingGroup != null) SaveGroupNameDraft(false); if (groupNameTimer != null) groupNameTimer.Stop(); IsReady = false; undoTimer.Stop(); noticeTimer.Stop(); statusTimer.Stop(); UiDrag.Cancel(Window); DisposeMovePreview(); };
+            Control<Expander>("CompletedSection").Collapsed += delegate { completedVisibleLimit = CompletedPageSize; Control<StackPanel>("CompletedList").Children.Clear(); PruneRowCache(); };
+            Window.Closed += delegate { if (editingGroup != null) SaveGroupNameDraft(false); if (groupNameTimer != null) groupNameTimer.Stop(); IsReady = false; dragging = false; windowMoveFrames.Cancel(); undoTimer.Stop(); noticeTimer.Stop(); statusTimer.Stop(); UiDrag.Cancel(Window); DisposeMovePreview(); };
             Window.Deactivated += delegate { UiDrag.Cancel(Window); };
             Window.PreviewMouseDown += delegate(object sender, MouseButtonEventArgs e)
             {
@@ -402,6 +415,7 @@ namespace DesktopTodo
             Version version = Assembly.GetExecutingAssembly().GetName().Version;
             Control<TextBlock>("SettingsVersion").Text = "v" + version.Major + "." + version.Minor;
             BuildSettingsCategories();
+            BuildProductivityFeatures();
             UpdateCardClip();
             ApplyLanguage();
             RefreshInputHint(); RefreshTitle(); Refresh();
@@ -527,7 +541,7 @@ namespace DesktopTodo
         private void AnimateIn(FrameworkElement element)
         {
             if (element == null) return;
-            if (!Window.IsVisible)
+            if (!Window.IsVisible || !SystemParameters.ClientAreaAnimation)
             {
                 UiAnimation.Release(element);
                 element.BeginAnimation(UIElement.OpacityProperty, null);
@@ -548,7 +562,24 @@ namespace DesktopTodo
             if (area == null || history == null) return;
             // Keep the collapsed header anchored above the footer. Expanded history
             // gets its own bounded scroll region instead of displacing pending work.
-            history.MaxHeight = Math.Max(0, Math.Min(area.ActualHeight * .42, area.ActualHeight - 100));
+            // Reserve the measured tool/search area, the completed header, and
+            // one pending row. A hard-coded reserve overflowed small search cards.
+            Expander completed = Control<Expander>("CompletedSection");
+            ToggleButton header = completed.Template == null ? null : completed.Template.FindName("HeaderToggle", completed) as ToggleButton;
+            double headerHeight = header != null && header.ActualHeight > 0 ? header.ActualHeight : 48;
+            double reserved = area.RowDefinitions[0].ActualHeight + headerHeight + Control<Grid>("CompletedDock").Margin.Top + 40;
+            history.MaxHeight = Math.Max(0, Math.Min(area.ActualHeight * .42, area.ActualHeight - reserved));
+            UpdateEmptyPlaceholder();
+        }
+        private void UpdateEmptyPlaceholder()
+        {
+            StackPanel empty = Control<StackPanel>("EmptyPanel"); ScrollViewer scroll = Control<ScrollViewer>("PendingScroll");
+            if (empty == null || scroll == null || scroll.ActualHeight <= 0) return;
+            bool compact = scroll.ActualHeight < 180, icon = scroll.ActualHeight >= 165;
+            empty.Margin = compact ? new Thickness(0, 8, 0, 8) : new Thickness(0, 32, 0, 30);
+            empty.Children[0].Visibility = icon ? Visibility.Visible : Visibility.Collapsed;
+            Control<TextBlock>("EmptyTitle").Margin = icon ? new Thickness(0, 15, 0, 6) : new Thickness(0, 0, 0, 6);
+            Control<TextBlock>("EmptySubtitle").Visibility = scroll.ActualHeight >= 70 ? Visibility.Visible : Visibility.Collapsed;
         }
         internal static bool ShouldShowInputHint(string text, bool focused) { return String.IsNullOrEmpty(text) && !focused; }
         internal static bool IsTopDragPoint(double pointerY, double inputTopY) { return pointerY >= 0 && pointerY < inputTopY; }
@@ -714,6 +745,7 @@ namespace DesktopTodo
         internal bool MovePreviewActive { get { return movePreview != null && Native.IsWindow(movePreview.Handle); } }
         internal void BeginWindowMove(Native.Point cursor)
         {
+            windowMoveFrames.Cancel();
             dragStart = cursor; Native.PhysicalWindowRect(Desktop.Handle, out dragRect);
             dragTarget = dragRect; dragMonitor = Native.MonitorFor(dragRect).Handle;
             dragDisplays = Native.PhysicalMonitors().ToArray();
@@ -736,10 +768,10 @@ namespace DesktopTodo
             if (!dragging || State.Locked || !IsReady) return;
             if (!dragMoved && !PastDragThreshold(dragStart, current, dragScale)) return;
             dragMoved = true;
-            // A normal top-level HWND already has a composited surface. Move it
-            // directly: no capture, replacement window or opacity hand-off.
-            // Only Explorer-attached child windows need a frozen top-level proxy.
-            if (Desktop.IsAttached && !previewAttempted)
+            // Moving a per-pixel-transparent WPF HWND also drives WPF's native
+            // position/DPI/layout pipeline. Keep that surface stationary in BOTH
+            // modes: translate one immutable native surface for the entire gesture.
+            if (!previewAttempted)
             {
                 previewAttempted = true; BeginMovePreview(dragRect);
                 // Capture may take longer on high DPI displays. Never move using
@@ -750,9 +782,15 @@ namespace DesktopTodo
             if (MovePreviewActive) UpdateMovePreview(dragTarget);
             else Desktop.Move(dragTarget.Left, dragTarget.Top, dragTarget.Right - dragTarget.Left, dragTarget.Bottom - dragTarget.Top);
         }
+        internal void QueueWindowMove(Native.Point current)
+        {
+            if (dragging && !State.Locked && IsReady) windowMoveFrames.Queue(new Point(current.X, current.Y));
+        }
         internal void FinishWindowMoveForTest(bool commit) { FinishMove(Control<FrameworkElement>("Card"), commit); }
         internal void FinishWindowMoveForTest(bool commit, Native.Point cursor) { FinishMove(Control<FrameworkElement>("Card"), commit, cursor); }
         internal IntPtr MovePreviewHandle { get { return movePreview == null ? IntPtr.Zero : movePreview.Handle; } }
+        internal int MovePreviewSurfaceBuilds { get { return movePreview == null ? 0 : movePreview.SurfaceBuilds; } }
+        internal int MovePreviewPositionUpdates { get { return movePreview == null ? 0 : movePreview.PositionUpdates; } }
         internal bool BeginMovePreview(Native.Rect rect)
         {
             try
@@ -787,10 +825,15 @@ namespace DesktopTodo
         private void FinishMove(FrameworkElement header, bool commit, Native.Point? testCursor = null)
         {
             if (!dragging) return;
-            dragging = false;
-            if (header.IsMouseCaptured) header.ReleaseMouseCapture();
+            bool pendingMove = windowMoveFrames.IsQueued;
+            windowMoveFrames.Cancel();
             Native.Point releaseCursor; Native.GetPhysicalCursorPos(out releaseCursor);
             if (testCursor.HasValue) releaseCursor = testCursor.Value;
+            // A quick press/move/release may happen before the next render event.
+            // Commit that final point, but Escape must discard all queued movement.
+            if (commit && !dragMoved && pendingMove) ContinueWindowMove(releaseCursor);
+            dragging = false;
+            if (header.IsMouseCaptured) header.ReleaseMouseCapture();
             Native.MonitorArea targetMonitor = Native.MonitorAt(releaseCursor);
             // Re-sample on release; the last mouse-move can precede the final point.
             // Cancel never resizes the proxy or reads a draft into persistent state.
@@ -958,14 +1001,14 @@ namespace DesktopTodo
         public void Remove(TodoItem item)
         {
             if (item == null || item.Deleted) return;
-            item.Deleted = true; Removed.Push(item); undoGroups.Push(new List<TodoItem> { item });
+            item.Deleted = true; item.DeletedAt = DateTime.UtcNow.Ticks; Removed.Push(item); undoGroups.Push(new List<TodoItem> { item });
             undoLabel = "已移除事项"; StartUndoCountdown(); NotifyChanged(); Refresh();
         }
         internal void ClearCompleted()
         {
             List<TodoItem> items = VisibleCompleted().ToList();
             if (items.Count == 0) return;
-            foreach (TodoItem item in items) { item.Deleted = true; Removed.Push(item); }
+            foreach (TodoItem item in items) { item.Deleted = true; item.DeletedAt = DateTime.UtcNow.Ticks; Removed.Push(item); }
             undoGroups.Push(items); undoLabel = "已清空 " + items.Count + " 条已完成事项";
             StartUndoCountdown(); NotifyChanged(); Refresh();
         }
@@ -973,15 +1016,13 @@ namespace DesktopTodo
         {
             undoTimer.Stop(); undoExpiresAtUtc = DateTime.MinValue;
             Removed.Clear(); undoGroups.Clear(); undoLabel = "已移除事项"; Refresh();
-            int purged = State.Items.RemoveAll(item => item.Deleted);
-            if (purged > 0) NotifyChanged();
         }
         public void Undo()
         {
             if (undoExpiresAtUtc != DateTime.MinValue && DateTime.UtcNow >= undoExpiresAtUtc) { ExpireUndo(); return; }
             if (undoGroups.Count == 0) return;
             List<TodoItem> items = undoGroups.Pop();
-            foreach (TodoItem item in items) item.Deleted = false;
+            foreach (TodoItem item in items) State.Restore(item);
             for (int i = 0; i < items.Count && Removed.Count > 0; i++) Removed.Pop();
             undoLabel = undoGroups.Count > 0 && undoGroups.Peek().Count > 1 ? "已清空 " + undoGroups.Peek().Count + " 条已完成事项" : "已移除事项";
             if (undoGroups.Count > 0) StartUndoCountdown();
@@ -1017,23 +1058,43 @@ namespace DesktopTodo
         {
             UiDrag.Cancel(Window);
             StackPanel pending = Control<StackPanel>("PendingList"), completed = Control<StackPanel>("CompletedList");
-            pending.Children.Clear(); completed.Children.Clear();
-            UpdateRowAppearance(); PruneRowCache();
+            List<UIElement> nextPending = new List<UIElement>(), nextCompleted = new List<UIElement>();
+            compactSearchLayout = CompactSearch;
+            UpdateRowAppearance();
             foreach (string key in headingCache.Keys.Where(key => key != "__ungrouped__" && !State.Groups.Any(g => g.Id == key)).ToArray()) headingCache.Remove(key);
             List<TodoItem> visiblePending = VisiblePending().ToList();
             if (State.DisableGroups || State.Groups.Count == 0)
-                foreach (TodoItem item in visiblePending) pending.Children.Add(CachedTaskRow(item));
+                foreach (TodoItem item in visiblePending) nextPending.Add(CachedTaskRow(item));
             else
             {
                 ILookup<string, TodoItem> members = visiblePending.ToLookup(item => item.GroupId ?? "");
-                foreach (TodoGroup group in State.OrderedGroups.Where(g => g.Pinned)) AppendPendingGroup(pending, members[group.Id].ToList(), group.Id, group.Name);
-                AppendPendingGroup(pending, members[""].ToList(), null, L("未分组", "Ungrouped"));
-                foreach (TodoGroup group in State.OrderedGroups.Where(g => !g.Pinned)) AppendPendingGroup(pending, members[group.Id].ToList(), group.Id, group.Name);
+                foreach (TodoGroup group in State.OrderedGroups.Where(g => g.Pinned)) AppendPendingGroup(pending, members[group.Id].ToList(), group.Id, group.Name, nextPending);
+                AppendPendingGroup(pending, members[""].ToList(), null, L("未分组", "Ungrouped"), nextPending);
+                foreach (TodoGroup group in State.OrderedGroups.Where(g => !g.Pinned)) AppendPendingGroup(pending, members[group.Id].ToList(), group.Id, group.Name, nextPending);
             }
-            if (Control<Expander>("CompletedSection").IsExpanded)
-                foreach (TodoItem item in VisibleCompleted()) completed.Children.Add(CachedTaskRow(item));
-            int count = visiblePending.Count, done = State.Items.Count(item => !item.Deleted && item.IsCompleted);
-            Control<TextBlock>("PendingCount").Text = IsEnglish ? count.ToString() : count + " 件";
+            if (compactSearchLayout && searchQuery.Length > 0)
+            {
+                List<TodoItem> matchingDone = VisibleCompleted().ToList();
+                if (matchingDone.Count > 0)
+                {
+                    TextBlock heading = new TextBlock { Text = L("已完成", "Completed") + "（" + matchingDone.Count + "）",
+                        FontSize = 10.5, Margin = new Thickness(0, 10, 0, 4) };
+                    heading.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush"); nextPending.Add(heading);
+                    AppendCompletedPage(nextPending, matchingDone);
+                }
+            }
+            else if (!compactSearchLayout && Control<Expander>("CompletedSection").IsExpanded)
+                AppendCompletedPage(nextCompleted, VisibleCompleted().ToList());
+            // Completed rows can move between the two lists at the responsive
+            // breakpoint. Detach from the old parent before attaching the new one.
+            if (compactSearchLayout) { ReconcileRows(completed, nextCompleted); ReconcileRows(pending, nextPending); }
+            else { ReconcileRows(pending, nextPending); ReconcileRows(completed, nextCompleted); }
+            PruneRowCache();
+            Control<Grid>("CompletedDock").Visibility = compactSearchLayout ? Visibility.Collapsed : Visibility.Visible;
+            Control<TextBlock>("PendingSectionLabel").Text = compactSearchLayout ? L("搜索结果", "Search results") : L("未完成", "Pending");
+            int count = visiblePending.Count, done = VisibleCompleted().Count();
+            int shownCount = compactSearchLayout && searchQuery.Length > 0 ? count + done : count;
+            Control<TextBlock>("PendingCount").Text = IsEnglish ? shownCount.ToString() : shownCount + " 件";
             Control<Button>("SortButton").Content = State.PendingSort == "Descending" ? L("↓ 降序", "↓ Newest") : L("↑ 升序", "↑ Oldest");
             Control<Button>("GroupButton").Content = ActiveGroupName();
             Button addGroup = Control<Button>("AddGroupButton");
@@ -1041,33 +1102,48 @@ namespace DesktopTodo
             Control<TextBlock>("AddGroupLabel").Text = ActiveGroupName();
             addGroup.ToolTip = L("新待办添加到：", "Add new task to: ") + ActiveGroupName();
             Control<TextBlock>("CompletedHeader").Text = IsEnglish ? "Completed (" + done + ")" : "已完成（" + done + "）";
-            Control<FrameworkElement>("EmptyPanel").Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            Control<FrameworkElement>("EmptyPanel").Visibility = count == 0 && (!compactSearchLayout || done == 0 || searchQuery.Length == 0) ? Visibility.Visible : Visibility.Collapsed;
+            UpdateEmptyPlaceholder();
             Control<TextBlock>("EmptyTitle").Text = done == 0 ? L("把想做的事，先记下来", "Write down what you want to do") : L("都完成了，歇一会儿吧", "All done — take a break");
             Control<TextBlock>("EmptySubtitle").Text = done == 0 ? L("一件一件来，不必着急", "One thing at a time") : L("新的事项，随时可以在上方添加", "Add another task whenever you like");
             Control<FrameworkElement>("UndoPanel").Visibility = Removed.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             UpdateUndoMessage();
             Control<Button>("ClearCompletedButton").Visibility = done > 0 ? Visibility.Visible : Visibility.Collapsed;
+            RefreshSearchResults();
             RefreshStatus(); UpdateProgress();
         }
 
         private void RefreshCompletedRows()
         {
-            StackPanel completed = Control<StackPanel>("CompletedList");
-            completed.Children.Clear();
-            UpdateRowAppearance();
-            foreach (TodoItem item in VisibleCompleted()) completed.Children.Add(CachedTaskRow(item));
+            Refresh();
+        }
+        private static void ReconcileRows(StackPanel panel, IList<UIElement> desired)
+        {
+            HashSet<UIElement> keep = new HashSet<UIElement>(desired);
+            for (int i = panel.Children.Count - 1; i >= 0; i--)
+                if (!keep.Contains(panel.Children[i])) panel.Children.RemoveAt(i);
+            for (int i = 0; i < desired.Count; i++)
+            {
+                UIElement row = desired[i];
+                if (i < panel.Children.Count && panel.Children[i] == row) continue;
+                int previous = panel.Children.IndexOf(row);
+                if (previous >= 0) panel.Children.RemoveAt(previous);
+                panel.Children.Insert(i, row);
+            }
         }
         private void UpdateRowAppearance()
         {
-            string next = State.Language + ":" + State.DisableGroups +
+            string next = State.Language + ":" + State.DisableGroups + ":" + CompactSearch +
                 ":" + String.Join("|", State.OrderedGroups.Select(g => g.Id + ":" + g.Name + ":" + g.Pinned));
             if (next == rowAppearance) return;
             rowCache.Clear(); rowAppearance = next;
         }
         private void PruneRowCache()
         {
-            bool expanded = Control<Expander>("CompletedSection").IsExpanded;
-            foreach (string id in rowCache.Where(pair => pair.Value.Item.Deleted || (pair.Value.Item.IsCompleted && !expanded)).Select(pair => pair.Key).ToArray()) rowCache.Remove(id);
+            HashSet<string> retained = new HashSet<string>(Control<StackPanel>("PendingList").Children.OfType<Grid>()
+                .Concat(Control<StackPanel>("CompletedList").Children.OfType<Grid>()).Select(row => row.Tag as TodoItem)
+                .Where(item => item != null).Select(item => item.Id));
+            foreach (string id in rowCache.Keys.Where(id => !retained.Contains(id)).ToArray()) rowCache.Remove(id);
         }
         private Grid CachedTaskRow(TodoItem item)
         {
@@ -1092,24 +1168,25 @@ namespace DesktopTodo
             NotifyChanged(); Refresh();
         }
 
-        private IEnumerable<TodoItem> VisiblePending() { return State.Pending; }
-        private IEnumerable<TodoItem> VisibleCompleted() { return State.Completed; }
-        private void AppendPendingGroup(StackPanel panel, IList<TodoItem> all, string groupId, string name)
+        private IEnumerable<TodoItem> VisiblePending() { return State.Pending.Where(MatchesSearch); }
+        private IEnumerable<TodoItem> VisibleCompleted() { return State.Completed.Where(MatchesSearch); }
+        private void AppendPendingGroup(StackPanel panel, IList<TodoItem> all, string groupId, string name, List<UIElement> desired)
         {
             List<TodoItem> items = all.ToList();
             string collapseKey = groupId ?? "__ungrouped__";
-            bool collapsed = State.CollapsedGroupIds.Contains(collapseKey);
+            bool collapsed = searchQuery.Length > 0 ? searchCollapsedGroups.Contains(collapseKey) : State.CollapsedGroupIds.Contains(collapseKey);
+            if (searchQuery.Length > 0 && items.Count == 0) return;
             TodoGroup currentGroup = State.Groups.FirstOrDefault(g => g.Id == groupId);
-            string signature = name + ":" + items.Count + ":" + collapsed + ":" + (currentGroup != null && currentGroup.Pinned) + ":" + State.ThemeId + ":" + State.DarkMode + ":" + State.Language;
+            string signature = name + ":" + items.Count + ":" + collapsed + ":" + CompactSearch + ":" + (searchQuery.Length > 0) + ":" + (currentGroup != null && currentGroup.Pinned) + ":" + State.Language;
             CachedHeading cached;
             if (headingCache.TryGetValue(collapseKey, out cached) && cached.Signature == signature)
             {
-                cached.Heading.Margin = new Thickness(0, panel.Children.Count == 0 ? 0 : 7, 0, 2);
-                panel.Children.Add(cached.Heading);
-                if (!collapsed) foreach (TodoItem item in items) panel.Children.Add(CachedTaskRow(item));
+                cached.Heading.Margin = new Thickness(0, desired.Count == 0 ? 0 : 7, 0, 2);
+                desired.Add(cached.Heading);
+                if (!collapsed) foreach (TodoItem item in items) desired.Add(CachedTaskRow(item));
                 return;
             }
-            Grid heading = new Grid { Height = 26, Margin = new Thickness(0, panel.Children.Count == 0 ? 0 : 7, 0, 2), Background = Brushes.Transparent,
+            Grid heading = new Grid { Height = 26, Margin = new Thickness(0, desired.Count == 0 ? 0 : 7, 0, 2), Background = Brushes.Transparent,
                 UseLayoutRounding = false, SnapsToDevicePixels = false };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
             heading.ColumnDefinitions.Add(new ColumnDefinition());
@@ -1119,9 +1196,15 @@ namespace DesktopTodo
                 Foreground = Brush("MutedBrush"), ToolTip = collapsed ? L("展开分组", "Expand group") : L("折叠分组", "Collapse group"),
                 FocusVisualStyle = null };
             fold.VerticalAlignment = VerticalAlignment.Center;
+            fold.SetResourceReference(Button.ForegroundProperty, "MutedBrush");
             System.Windows.Automation.AutomationProperties.SetName(fold, collapsed ? L("展开分组", "Expand group") : L("折叠分组", "Collapse group"));
             fold.Click += delegate
             {
+                if (searchQuery.Length > 0)
+                {
+                    if (collapsed) searchCollapsedGroups.Remove(collapseKey); else searchCollapsedGroups.Add(collapseKey);
+                    Refresh(); return;
+                }
                 if (collapsed) State.CollapsedGroupIds.Remove(collapseKey);
                 else State.CollapsedGroupIds.Add(collapseKey);
                 NotifyChanged(); Refresh();
@@ -1134,7 +1217,7 @@ namespace DesktopTodo
             UiDrag.Target(heading, "DeskTodo.Task",
                 delegate(object moving, bool after) { MoveTask(moving as TodoItem, groupId); },
                 null, true, delegate(object moving, bool after) { return GroupTaskSlot(panel, heading, (TodoItem)moving); });
-            if (groupId != null)
+            if (groupId != null && !CompactSearch)
             {
                 heading.Cursor = Cursors.SizeAll;
                 UiDrag.Source(heading, groupId, "DeskTodo.Group", heading, true);
@@ -1147,8 +1230,8 @@ namespace DesktopTodo
             heading.Children.Add(fold); Grid.SetColumn(label, 1); heading.Children.Add(label);
             Grid.SetColumn(count, 2); heading.Children.Add(count);
             headingCache[collapseKey] = new CachedHeading { Signature = signature, Heading = heading };
-            panel.Children.Add(heading);
-            if (!collapsed) foreach (TodoItem item in items) panel.Children.Add(CachedTaskRow(item));
+            desired.Add(heading);
+            if (!collapsed) foreach (TodoItem item in items) desired.Add(CachedTaskRow(item));
         }
         private string ActiveGroupName()
         {
@@ -1482,7 +1565,7 @@ namespace DesktopTodo
             more.Click += delegate { if (item.IsCompleted) Remove(item); else { menu.PlacementTarget = more; menu.Placement = PlacementMode.Left; menu.IsOpen = true; } };
             row.MouseEnter += delegate { more.Opacity = 1; }; row.MouseLeave += delegate { more.Opacity = 0.65; };
             Grid.SetColumn(more, 4); row.Children.Add(more);
-            if (!item.IsCompleted)
+            if (!item.IsCompleted && !CompactSearch)
             {
                 UiDrag.Source(row, item, "DeskTodo.Task");
                 UiDrag.Target(row, "DeskTodo.Task", delegate(object moving, bool after) { MoveTask(moving as TodoItem, item.GroupId, item, after); },
@@ -1642,6 +1725,7 @@ namespace DesktopTodo
             contentScale = next;
             content.LayoutTransform = new ScaleTransform(next, next);
             if (settingsCategorySurface != null) settingsCategorySurface.LayoutTransform = new ScaleTransform(next, next);
+            if (toastSurface != null) { toastSurface.LayoutTransform = new ScaleTransform(next, next); toastSurface.Margin = new Thickness(18, 0, 18, 44 * next); }
             if (settingsCategorySurface != null) SizeSettingsCategory();
             UpdateCardClip();
         }
@@ -1796,6 +1880,8 @@ namespace DesktopTodo
         }
         internal void OpenSettingsCategory(string key)
         {
+            RefreshProductivitySettings();
+            if (featureReady && key == "ThemeLabel") key = "CustomSectionLabel";
             StackPanel content;
             if (!settingsCategoryContents.TryGetValue(key, out content)) return;
             ++settingsCategoryAnimationVersion;
@@ -1806,13 +1892,14 @@ namespace DesktopTodo
             bool wasHidden = settingsCategoryLayer.Visibility != Visibility.Visible;
             double currentOpacity = wasHidden ? 0 : settingsCategoryLayer.Opacity;
             settingsCategoryLayer.BeginAnimation(UIElement.OpacityProperty, null);
-            settingsCategoryLayer.Opacity = Window.IsVisible ? currentOpacity : 1;
+            bool motion = Window.IsVisible && SystemParameters.ClientAreaAnimation;
+            settingsCategoryLayer.Opacity = motion ? currentOpacity : 1;
             settingsCategoryLayer.Visibility = Visibility.Visible;
             TranslateTransform slide = settingsCategorySurface.RenderTransform as TranslateTransform;
             if (slide == null) { slide = new TranslateTransform(); settingsCategorySurface.RenderTransform = slide; }
             slide.BeginAnimation(TranslateTransform.YProperty, null);
-            slide.Y = wasHidden && Window.IsVisible ? 10 : slide.Y;
-            if (Window.IsVisible)
+            slide.Y = wasHidden && motion ? 8 : slide.Y;
+            if (motion)
             {
                 UiAnimation.CacheFor(settingsCategorySurface, 250);
                 settingsCategoryLayer.Opacity = 1;
@@ -1830,7 +1917,7 @@ namespace DesktopTodo
         {
             if (!SettingsCategoryOpen) return;
             int version = ++settingsCategoryAnimationVersion;
-            if (!animate || !Window.IsVisible) { FinishSettingsCategoryClose(version); return; }
+            if (!animate || !Window.IsVisible || !SystemParameters.ClientAreaAnimation) { FinishSettingsCategoryClose(version); return; }
             UiAnimation.CacheFor(settingsCategorySurface, 190);
             double currentOpacity = settingsCategoryLayer.Opacity;
             DoubleAnimation fade = new DoubleAnimation(currentOpacity, 0, TimeSpan.FromMilliseconds(150))
@@ -1941,6 +2028,7 @@ namespace DesktopTodo
                 Control<CheckBox>("StartupToggle").IsChecked = cachedStartup;
                 if (refreshExternal) secondaryMonitorCache = null;
                 RefreshSecondarySettings();
+                RefreshProductivitySettings();
             }
             finally { suppressSettingsEvents = false; }
         }
@@ -2049,6 +2137,7 @@ namespace DesktopTodo
         }
         internal void ShowConfirmation(string title, string body, string acceptLabel, Action action)
         {
+            HideToast();
             CloseSettingsCategory(false);
             noticeTimer.Stop(); noticeExpiresAtUtc = DateTime.MinValue;
             PrepareOverlaySurface(false);
@@ -2065,6 +2154,7 @@ namespace DesktopTodo
         }
         internal void ShowNotice(string title, string body)
         {
+            HideToast();
             CloseSettingsCategory(false);
             PrepareOverlaySurface(false);
             pendingConfirmation = null;
@@ -2179,11 +2269,18 @@ namespace DesktopTodo
         }
         internal void RefreshImportedState()
         {
+            completedVisibleLimit = CompletedPageSize;
             State.Validate(); ApplyTheme(); RefreshTitle(); Refresh(); RefreshSettings();
         }
         public void RestoreSession(TodoWindow previous)
         {
             Input.Text = previous.Input.Text;
+            if (previous.SearchOpen)
+            {
+                SetSearchOpen(true); completedBeforeSearch = previous.completedBeforeSearch;
+                Control<TextBox>("SearchInput").Text = previous.Control<TextBox>("SearchInput").Text;
+                ApplySearch();
+            }
             foreach (TodoItem item in previous.Removed.Reverse()) Removed.Push(item);
             foreach (List<TodoItem> group in previous.undoGroups.Reverse()) undoGroups.Push(new List<TodoItem>(group));
             undoLabel = previous.undoLabel;
@@ -2194,6 +2291,7 @@ namespace DesktopTodo
                 if (remaining <= TimeSpan.Zero) ExpireUndo();
                 else { undoTimer.Interval = TimeSpan.FromMilliseconds(250); undoTimer.Start(); }
             }
+            completedVisibleLimit = previous.completedVisibleLimit;
             Control<Expander>("CompletedSection").IsExpanded = previous.Control<Expander>("CompletedSection").IsExpanded;
             Refresh();
             if (previous.EditOpen && previous.editingItem != null)

@@ -1,15 +1,15 @@
 <p align="center"><img src="图标/待办软件内图标.png" width="76" alt="DeskTodo 图标"></p>
 <h1 align="center">DeskTodo</h1>
 <p align="center">一张安静留在桌面上的待办卡片。把事情记下来，按自己的节奏完成。</p>
-<p align="center"><a href="https://github.com/1242483743/DeskTodo/releases/tag/v1.46">v1.46</a> · Windows 10 / 11 x64 · <a href="LICENSE">MIT 开源</a> · 默认本地保存，无需账号</p>
-<p align="center"><a href="https://github.com/1242483743/DeskTodo/releases/download/v1.46/DeskTodo-Setup-v1.46.exe">下载安装版</a> · <a href="https://github.com/1242483743/DeskTodo/releases/download/v1.46/DeskTodo-v1.46.zip">下载免安装版</a> · <a href="https://github.com/1242483743/DeskTodo/releases/latest">最新发布</a> · <a href="使用说明.md">使用说明</a></p>
+<p align="center"><a href="https://github.com/1242483743/DeskTodo/releases/tag/v1.50">v1.50</a> · Windows 10 / 11 x64 · <a href="LICENSE">MIT 开源</a> · 默认本地保存，无需账号</p>
+<p align="center"><a href="https://github.com/1242483743/DeskTodo/releases/download/v1.50/DeskTodo-Setup-v1.50.exe">下载安装版</a> · <a href="https://github.com/1242483743/DeskTodo/releases/download/v1.50/DeskTodo-v1.50.zip">下载免安装版</a> · <a href="https://github.com/1242483743/DeskTodo/releases/latest">最新发布</a> · <a href="使用说明.md">使用说明</a></p>
 
 ## 界面预览
 
 保留简洁的卡片框架，用细线控件、低饱和配色和统一的文字对齐，让待办清单更耐看。
 
-<p align="center"><img src="docs/images/main-light.png" width="330" alt="v1.46 浅色主页：分组、时间和完成进度"> <img src="docs/images/main-dark.png" width="330" alt="v1.46 深色主页：相同布局与石墨深色主题"></p>
-<p align="center">浅色与深色主页 · 截图均来自 v1.46，内容为演示数据，不含个人待办</p>
+<p align="center"><img src="docs/images/main-light.png" width="330" alt="v1.50 浅色主页：分组、搜索和完成进度"> <img src="docs/images/main-dark.png" width="330" alt="v1.50 深色主页：相同布局与石墨深色主题"></p>
+<p align="center">浅色与深色主页 · 截图来自 v1.50 独立演示数据，不含个人待办</p>
 
 ## 能做什么
 
@@ -20,22 +20,23 @@
 - **外观随你调整**：石墨、森屿、海盐等七套低饱和主题，均支持浅色与深色；可修改透明度、名称、界面按钮以及事项时间、月日显示。
 - **双屏使用更协调**：处理不同缩放比例的跨屏移动；可选“仅连接副屏时自启”，在所选副屏恢复上次位置，此选项默认关闭。
 - **本地保存与备份**：自动保存、导入导出 JSON 备份、托盘与开机自启、可自定义全局快捷键。
+- **少停顿、少打扰**：普通待办操作合并到后台保存，已完成历史每批加载 50 条，搜索仍覆盖完整数据；成功短提示不打断操作，手动清空最近删除前生成完整备份。
 - **可选局域网管理**：同一可信局域网内，管理员可通过管理口令查看和维护多个用户的共享待办、分组和提醒；共享默认关闭，无需公网服务器。
 
-<p align="center"><img src="docs/images/groups.png" width="330" alt="v1.46 分组管理：工作、生活分组与拖动把手"> <img src="docs/images/reminder.png" width="330" alt="v1.46 单条事项的独立提醒设置"></p>
+<p align="center"><img src="docs/images/groups.png" width="330" alt="v1.50 分组管理与拖动把手"> <img src="docs/images/reminder.png" width="330" alt="v1.50 单条事项的独立提醒设置"></p>
 <p align="center">分组管理与独立提醒</p>
 
-<p align="center"><img src="docs/images/settings-overview.png" width="330" alt="v1.46 设置分类总览"> <img src="docs/images/settings-theme.png" width="330" alt="v1.46 主题颜色、深色外观与透明度设置"></p>
+<p align="center"><img src="docs/images/settings-overview.png" width="330" alt="v1.50 设置分类总览"> <img src="docs/images/settings-theme.png" width="330" alt="v1.50 外观、主题颜色和透明度设置"></p>
 <p align="center">设置分类与主题偏好</p>
 
-## v1.46 更新重点
+## v1.50 更新重点
 
-- **减少设置点击停顿**：普通外观设置即时生效，连续操作合并后在后台原子写盘，不再每点一下就让界面等待磁盘。
-- **减少重复创建界面**：时间、日期和主题更新保留现有待办行；透明度滑块只更新透明度，不重建整套主题资源。
-- **减少重复查询**：缓存自启状态和副屏选项，在打开设置或显示器发生变化等必要时机刷新。
-- **保存状态更准确**：区分保存中、成功和失败；防止旧后台快照覆盖较新的修改，隐藏和退出时仍检查并保存最新数据。
+- **TUN 与局域网共存**：按每个可用局域网网卡分别发送搜索并重试，不再依赖默认广播路由；发现回复及后续连接使用匹配的局域网接口。
+- **不改代理或系统配置**：过滤常见 fake-IP/未连接地址，保留原有管理口令和协议。若代理严格路由阻止局域网，仍需在代理中允许局域网直连，软件不会绕过其拦截策略。
+- **包含 v1.49 体验改进**：普通操作后台保存、已完成历史分页、完整数据搜索、非阻塞成功提示及清空最近删除前备份。
+- **包含 v1.47–v1.48 修复**：搜索、最近删除、历史备份，以及移动闪烁、按钮间距和 TLS 更新连接修复。
 
-本版在本地独立环境通过 **820 项应用检查与 49 项安装器检查**，覆盖保存竞态、慢磁盘、窗口重建、跨屏、拖动、提醒、托盘及安装回滚等场景。实际流畅度也会受到电脑配置、显示设置与后台程序影响。
+应用与安装器均进行隔离回归，包含多网卡路由绑定、UDP 丢包重试、保存竞态、跨屏、拖动、提醒和安装回滚。启用 TUN 的实机环境已通过真实 WLAN 发现另一台电脑；没有读取对方待办，不代表已完成双方授权后的全部联机操作验证。实际表现仍取决于网络、代理策略与设备配置。
 
 从 v1.22 升级还包含新的视觉配色、分组拖放、局域网管理、全局快捷键、副屏启动条件及混合 DPI 修复等后续改进，详见[使用说明](使用说明.md)。
 
@@ -43,9 +44,9 @@
 
 | 下载文件 | 用途 |
 | --- | --- |
-| [DeskTodo-Setup-v1.46.exe](https://github.com/1242483743/DeskTodo/releases/download/v1.46/DeskTodo-Setup-v1.46.exe) | 推荐：带安装向导、开始菜单及可选桌面快捷方式 |
-| [DeskTodo-v1.46.zip](https://github.com/1242483743/DeskTodo/releases/download/v1.46/DeskTodo-v1.46.zip) | 免安装：完整解压后运行 `DeskTodo.exe`，保留旁边的配置文件 |
-| [SHA256SUMS.txt](https://github.com/1242483743/DeskTodo/releases/download/v1.46/SHA256SUMS.txt) | 核对安装包和免安装包是否下载完整 |
+| [DeskTodo-Setup-v1.50.exe](https://github.com/1242483743/DeskTodo/releases/download/v1.50/DeskTodo-Setup-v1.50.exe) | 推荐：带安装向导、开始菜单及可选桌面快捷方式 |
+| [DeskTodo-v1.50.zip](https://github.com/1242483743/DeskTodo/releases/download/v1.50/DeskTodo-v1.50.zip) | 免安装：完整解压后运行 `DeskTodo.exe`，保留旁边的配置文件 |
+| [SHA256SUMS.txt](https://github.com/1242483743/DeskTodo/releases/download/v1.50/SHA256SUMS.txt) | 核对安装包和免安装包是否下载完整 |
 
 系统要求：Windows 10 / 11 **64 位**，.NET Framework **4.8**。
 
@@ -53,7 +54,7 @@
 
 **覆盖更新前，请先保存正在编辑的内容并退出旧版，再安装到原位置。** 安装器会检测已有安装并保留本机待办数据。建议先从软件设置中导出一份备份。
 
-GitHub 自动生成的 `Source code (zip)` / `Source code (tar.gz)` 是源码归档，**不是可直接运行的软件**。旧 v1.22 发布标签可能只包含当时的介绍文件；完整新版源码见 `main` 分支和 v1.46 标签。安装包未提供数字签名，文件哈希用于一致性校验，不代表数字签名。
+GitHub 自动生成的 `Source code (zip)` / `Source code (tar.gz)` 是源码归档，**不是可直接运行的软件**。完整新版源码见 `main` 分支和对应版本标签。安装包未提供数字签名，文件哈希用于一致性校验，不代表数字签名。
 
 ## 数据与使用边界
 
@@ -73,7 +74,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-setup.ps1 -AppDirectory dist
 ```
 
-应用输出到 `dist\DeskTodo.exe`，安装包输出到 `release\DeskTodo-Setup-v1.46.exe`。也可用 Visual Studio 打开 `src\DesktopTodo.csproj`，需要 .NET Framework 4.8 开发工具。
+应用输出到 `dist\DeskTodo.exe`；安装包按当前源码版本命名，输出到 `release\`。也可用 Visual Studio 打开 `src\DesktopTodo.csproj`，需要 .NET Framework 4.8 开发工具。
 
 运行自检：
 
@@ -88,11 +89,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-setup.ps1 -AppDi
 src/                    应用源码、WPF 界面与自检
 installer/              安装器源码与界面
 图标/                   程序和软件内图标资源
-docs/images/            v1.46 演示截图
+docs/images/            演示截图
 build.ps1               编译应用
 build-setup.ps1         构建安装包
 build-icon.ps1          导出多尺寸透明 ICO
 organize-versions.ps1   整理本地当前版本和历史成品
+publish-github.ps1      校验和准备 GitHub 成品；已有 CLI 登录时发布并核对摘要
 使用说明.md              完整使用说明
 LICENSE                 MIT 许可证
 ```

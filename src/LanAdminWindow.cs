@@ -489,7 +489,7 @@ namespace DesktopTodo
                     if (error != null) { status.Text = error; return; }
                     peers = found ?? new List<LanPeer>();
                     RefreshPeerLists();
-                    status.Text = peers.Count == 0 ? "没有发现用户。请确认对方已开启局域网管理并允许专用网络访问。"
+                    status.Text = peers.Count == 0 ? "未发现用户。请确认对方开启共享并放行 DeskTodo；若开启 TUN 严格路由，请在代理中允许局域网直连。"
                         : "发现 " + peers.Count + " 位用户";
                 });
             });

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Linq;
 using Microsoft.Win32;
 
 namespace DesktopTodo
@@ -12,6 +13,9 @@ namespace DesktopTodo
         public string DataPath { get { return Path.Combine(DirectoryPath, "tasks.json"); } }
         public string Warning;
         private bool protectBackup;
+        public string HistoryPath { get { return Path.Combine(DirectoryPath, "history"); } }
+        private string historyDay;
+        public string HistoryWarning { get; private set; }
         public Storage(string directory) { DirectoryPath = Path.GetFullPath(directory); }
         public AppState Load()
         {
@@ -60,6 +64,7 @@ namespace DesktopTodo
         internal void SaveSnapshot(byte[] snapshot)
         {
             Directory.CreateDirectory(DirectoryPath);
+            PreserveDailyHistory();
             string temporary = DataPath + ".tmp-" + Guid.NewGuid().ToString("N");
             try
             {
@@ -74,6 +79,40 @@ namespace DesktopTodo
                 protectBackup = false;
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+        private void PreserveDailyHistory()
+        {
+            string day = DateTime.Now.ToString("yyyy-MM-dd");
+            if (historyDay == day || !File.Exists(DataPath)) return;
+            try
+            {
+                // Snapshot only validated data before today's edits, not a damaged file.
+                Read(DataPath);
+                Directory.CreateDirectory(HistoryPath);
+                string destination = Path.Combine(HistoryPath, "tasks-" + day + ".json");
+                if (File.Exists(destination)) Read(destination);
+                else
+                {
+                    string temporary = destination + ".tmp-" + Guid.NewGuid().ToString("N");
+                    try
+                    {
+                        File.Copy(DataPath, temporary, false); Read(temporary);
+                        File.Move(temporary, destination);
+                    }
+                    finally { if (File.Exists(temporary)) File.Delete(temporary); }
+                }
+                // Only exact app-generated filenames are eligible for rotation.
+                foreach (string path in Directory.GetFiles(HistoryPath, "tasks-????-??-??.json")
+                    .Where(p => System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(p), @"^tasks-\d{4}-\d{2}-\d{2}\.json$"))
+                    .OrderByDescending(p => p, StringComparer.Ordinal).Skip(30)) File.Delete(path);
+                historyDay = day; HistoryWarning = null;
+            }
+            catch (Exception e) { HistoryWarning = "自动历史备份未完成：" + e.Message; }
+        }
+        public string[] HistoryFiles()
+        {
+            return Directory.Exists(HistoryPath) ? Directory.GetFiles(HistoryPath, "tasks-????-??-??.json")
+                .OrderByDescending(p => p, StringComparer.Ordinal).ToArray() : new string[0];
         }
         public void Export(AppState state, string destination)
         {

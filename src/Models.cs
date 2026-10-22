@@ -13,6 +13,7 @@ namespace DesktopTodo
         [DataMember] public long CreatedAt = DateTime.UtcNow.Ticks;
         [DataMember] public long CompletedAt;
         [DataMember] public bool Deleted;
+        [DataMember(EmitDefaultValue = false)] public long DeletedAt;
         [DataMember] public int ReminderIntervalMinutes;
         [DataMember] public int DailyReminderMinutesPlusOne;
         [DataMember] public long LastIntervalReminderAt;
@@ -23,6 +24,7 @@ namespace DesktopTodo
         [DataMember(EmitDefaultValue = false)] public bool Pinned;
         [DataMember(EmitDefaultValue = false)] public string GroupId;
         public bool IsCompleted { get { return CompletedAt > 0; } }
+        internal TodoItem CopyForSave() { return (TodoItem)MemberwiseClone(); }
     }
 
     [DataContract]
@@ -32,6 +34,7 @@ namespace DesktopTodo
         [DataMember] public string Name = "";
         [DataMember] public int SortOrder;
         [DataMember(EmitDefaultValue = false)] public bool Pinned;
+        internal TodoGroup CopyForSave() { return (TodoGroup)MemberwiseClone(); }
     }
 
     [DataContract]
@@ -120,6 +123,26 @@ namespace DesktopTodo
             return item;
         }
         public void Toggle(TodoItem item) { item.CompletedAt = item.IsCompleted ? 0 : DateTime.UtcNow.Ticks; }
+        // Strings/value fields are immutable copies. Never hand the live lists or
+        // mutable task/group objects to a serializer running on another thread.
+        internal AppState CopyForSave(long savedAt)
+        {
+            AppState copy = (AppState)MemberwiseClone();
+            copy.Items = Items.Select(item => item.CopyForSave()).ToList();
+            copy.Groups = Groups.Select(group => group.CopyForSave()).ToList();
+            copy.CollapsedGroupIds = new List<string>(CollapsedGroupIds);
+            copy.LastSavedAt = savedAt;
+            return copy;
+        }
+        public IEnumerable<TodoItem> RecentlyDeleted { get { return Items.Where(t => t.Deleted).OrderByDescending(t => t.DeletedAt); } }
+        public void Restore(TodoItem item)
+        {
+            if (item == null || !Items.Contains(item) || !item.Deleted) return;
+            item.Deleted = false; item.DeletedAt = 0;
+            item.LastIntervalReminderAt = DateTime.UtcNow.Ticks;
+            item.LastDailyReminderDate = DateTime.Now.ToString("yyyy-MM-dd");
+            item.ReminderSnoozeUntil = 0;
+        }
         public void Validate()
         {
             if (Version > 4) throw new InvalidOperationException("数据由较新版本创建，请使用新版软件打开。");
@@ -148,6 +171,8 @@ namespace DesktopTodo
             int repairOrder = 0;
             foreach (TodoItem item in Items.OrderBy(t => t.CreatedAt))
             {
+                if (item.Deleted && (item.DeletedAt <= 0 || item.DeletedAt > DateTime.UtcNow.Ticks)) item.DeletedAt = DateTime.UtcNow.Ticks;
+                if (!item.Deleted) item.DeletedAt = 0;
                 if (item.ReminderIntervalMinutes < 0 || item.ReminderIntervalMinutes > 10080) item.ReminderIntervalMinutes = 0;
                 if (item.DailyReminderMinutesPlusOne < 0 || item.DailyReminderMinutesPlusOne > 1440) item.DailyReminderMinutesPlusOne = 0;
                 if (item.LastIntervalReminderAt < 0) item.LastIntervalReminderAt = 0;

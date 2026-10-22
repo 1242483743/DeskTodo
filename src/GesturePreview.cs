@@ -20,6 +20,8 @@ namespace DesktopTodo
         private int surfaceWidth, surfaceHeight;
         internal IntPtr Handle { get; private set; }
         internal Native.Rect LastRect { get; private set; }
+        internal int SurfaceBuilds { get; private set; }
+        internal int PositionUpdates { get; private set; }
 
         internal GesturePreview(BitmapSource bitmap, Native.Rect rect, bool showImmediately = true)
         {
@@ -45,7 +47,10 @@ namespace DesktopTodo
         internal void Show()
         {
             using (new Native.PhysicalDpiScope())
-                if (!Native.SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, 1 | 2 | Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW))
+                // Only this short-lived, mouse-transparent surface is topmost.
+                // Explorer/other windows must not intermittently cover it while
+                // the source HWND owns capture. The real app's Z order is untouched.
+                if (!Native.SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 1 | 2 | Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
         }
 
@@ -53,12 +58,15 @@ namespace DesktopTodo
         {
             int width = rect.Right - rect.Left, height = rect.Bottom - rect.Top;
             if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException("rect");
+            if (surface != IntPtr.Zero && rect.Left == LastRect.Left && rect.Top == LastRect.Top &&
+                rect.Right == LastRect.Right && rect.Bottom == LastRect.Bottom) return;
             using (new Native.PhysicalDpiScope())
             {
                 if (width == surfaceWidth && height == surfaceHeight)
                 {
                     if (!Native.SetWindowPos(Handle, IntPtr.Zero, rect.Left, rect.Top, 0, 0, 1 | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE))
                         throw new Win32Exception(Marshal.GetLastWin32Error());
+                    PositionUpdates++;
                 }
                 else
                 {
@@ -101,6 +109,7 @@ namespace DesktopTodo
                     Blend blend = new Blend { ConstantAlpha = 255, AlphaFormat = 1 };
                     if (!UpdateLayeredWindow(Handle, IntPtr.Zero, ref destination, ref size, dc, ref origin, 0, ref blend, 2))
                         throw new Win32Exception(Marshal.GetLastWin32Error());
+                    SurfaceBuilds++;
                 }
                 LastRect = rect;
             }

@@ -26,6 +26,7 @@ namespace DesktopTodo
         [DataMember] public int Port;
         [DataMember] public string Version;
         internal string Address;
+        internal string LocalAddress;
         internal string Alias;
         public string DisplayTitle { get { return String.IsNullOrWhiteSpace(Alias) ? DisplayName : Alias; } }
         public string DeviceName { get { return MachineName; } }
@@ -159,6 +160,9 @@ namespace DesktopTodo
                     if (Encoding.UTF8.GetString(bytes) != DiscoveryMessage) continue;
                     LanPeer peer = peerFactory(); peer.Port = Port;
                     byte[] reply = Encoding.UTF8.GetBytes(LanJson.Write(peer));
+                    LanRoute replyRoute = LanRouting.FindRoute(source.Address, LanRouting.GetRoutes());
+                    if (replyRoute == null) continue;
+                    LanRouting.PinInterface(udp.Client, replyRoute.InterfaceIndex);
                     udp.Send(reply, reply.Length, source);
                 }
                 catch (ObjectDisposedException) { break; }
@@ -189,6 +193,9 @@ namespace DesktopTodo
                 try
                 {
                     client.ReceiveTimeout = 4000; client.SendTimeout = 4000;
+                    IPEndPoint localEndpoint = client.Client.LocalEndPoint as IPEndPoint;
+                    LanRoute localRoute = localEndpoint == null ? null : LanRouting.GetRoutes().FirstOrDefault(r => r.LocalAddress.Equals(localEndpoint.Address));
+                    if (localRoute != null) LanRouting.PinInterface(client.Client, localRoute.InterfaceIndex);
                     using (NetworkStream network = client.GetStream())
                     using (StreamReader reader = new StreamReader(network, Encoding.UTF8, false, 4096, true))
                     using (StreamWriter writer = new StreamWriter(network, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
@@ -209,29 +216,8 @@ namespace DesktopTodo
 
         internal static List<LanPeer> Discover(int waitMilliseconds)
         {
-            Dictionary<string, LanPeer> result = new Dictionary<string, LanPeer>();
-            using (UdpClient client = new UdpClient(0))
-            {
-                client.EnableBroadcast = true;
-                client.Client.ReceiveTimeout = 180;
-                byte[] query = Encoding.UTF8.GetBytes(DiscoveryMessage);
-                client.Send(query, query.Length, new IPEndPoint(IPAddress.Broadcast, DiscoveryPort));
-                client.Send(query, query.Length, new IPEndPoint(IPAddress.Loopback, DiscoveryPort));
-                DateTime end = DateTime.UtcNow.AddMilliseconds(Math.Max(250, waitMilliseconds));
-                while (DateTime.UtcNow < end)
-                {
-                    try
-                    {
-                        IPEndPoint source = new IPEndPoint(IPAddress.Any, 0);
-                        LanPeer peer = LanJson.Read<LanPeer>(Encoding.UTF8.GetString(client.Receive(ref source)));
-                        if (peer == null || String.IsNullOrWhiteSpace(peer.InstanceId) || peer.Port < 1) continue;
-                        peer.Address = source.Address.ToString(); result[peer.InstanceId] = peer;
-                    }
-                    catch (SocketException) { }
-                    catch { }
-                }
-            }
-            return result.Values.OrderBy(p => p.DisplayName).ThenBy(p => p.MachineName).ToList();
+            List<LanRoute> routes = LanRouting.GetRoutes(); routes.Add(LanRoute.Loopback());
+            return LanRouting.Discover(Math.Max(1600, waitMilliseconds), routes, DiscoveryPort);
         }
 
         internal static LanResponse Send(LanPeer peer, LanRequest request)
@@ -239,11 +225,19 @@ namespace DesktopTodo
             if (peer == null) return LanResponse.Fail("请先选择一位用户。");
             try
             {
-                using (TcpClient client = new TcpClient())
+                IPAddress destination;
+                if (!IPAddress.TryParse(peer.Address, out destination)) return LanResponse.Fail("用户地址无效，请重新扫描。");
+                LanRoute route = LanRouting.FindRoute(destination, LanRouting.GetRoutes(), peer.LocalAddress);
+                using (TcpClient client = route == null ? new TcpClient() : new TcpClient(new IPEndPoint(route.LocalAddress, 0)))
                 {
+                    if (route != null) LanRouting.PinInterface(client.Client, route.InterfaceIndex);
                     IAsyncResult connecting = client.BeginConnect(peer.Address, peer.Port, null, null);
-                    if (!connecting.AsyncWaitHandle.WaitOne(2500)) return LanResponse.Fail("连接超时，请确认双方在同一局域网且对方已开启共享。");
-                    client.EndConnect(connecting); client.ReceiveTimeout = 3500; client.SendTimeout = 3500;
+                    using (connecting.AsyncWaitHandle)
+                    {
+                        if (!connecting.AsyncWaitHandle.WaitOne(2500)) return LanResponse.Fail("连接超时。请确认对方开启共享；若启用 TUN 严格路由，请在代理中允许局域网直连。");
+                        client.EndConnect(connecting);
+                    }
+                    client.ReceiveTimeout = 3500; client.SendTimeout = 3500;
                     using (NetworkStream network = client.GetStream())
                     using (StreamReader reader = new StreamReader(network, Encoding.UTF8, false, 4096, true))
                     using (StreamWriter writer = new StreamWriter(network, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
