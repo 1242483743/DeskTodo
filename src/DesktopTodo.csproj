@@ -14,11 +14,11 @@
     <Compile Include="UiInteraction.cs"/><Compile Include="GlobalHotkeys.cs"/><Compile Include="LanRouting.cs"/><Compile Include="LanRoutingTests50.cs"/>
     <Reference Include="System"/><Reference Include="System.Core"/><Reference Include="System.Drawing"/>
     <Reference Include="System.Windows.Forms"/><Reference Include="System.Runtime.Serialization"/><Reference Include="System.Security"/>
-    <Reference Include="System.Xaml"/><Reference Include="WindowsBase"/>
+    <Reference Include="System.Xml"/><Reference Include="System.Xaml"/><Reference Include="WindowsBase"/>
     <Reference Include="PresentationCore"/><Reference Include="PresentationFramework"/>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Models.cs"/><Compile Include="Storage.cs"/><Compile Include="NativeDesktop.cs"/>
+    <Compile Include="Models.cs"/><Compile Include="Storage.cs"/><Compile Include="NativeDesktop.cs"/><Compile Include="SecondaryStartup.cs"/>
     <Compile Include="MiniBubble.cs"/><Compile Include="Productivity.cs"/><Compile Include="ProductivityTests.cs"/><Compile Include="FixTests48.cs"/><Compile Include="ImprovementTests49.cs"/><Compile Include="UpdateChecker.cs"/>
     <Compile Include="SoftCardShadow.cs"/><Compile Include="GestureWindowClip.cs"/>
     <Compile Include="TodoWindow.cs"/><Compile Include="TaskDragAdorner.cs"/><Compile Include="GesturePreview.cs"/><Compile Include="UiAssets.cs"/><Compile Include="UiGlyphs.cs"/><Compile Include="TrayMenu.cs"/><Compile Include="Themes.cs"/><Compile Include="ReminderPopup.cs"/><Compile Include="LanSync.cs"/><Compile Include="LanAdminWindow.cs"/><Compile Include="LanAdminPreferences.cs"/><Compile Include="Program.cs"/><Compile Include="Tests.cs"/><Compile Include="AssemblyInfo.cs"/>
